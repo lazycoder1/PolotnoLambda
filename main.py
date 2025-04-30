@@ -4,7 +4,7 @@ import os
 
 def main():
     try:
-        input_json_path = 'samples/sample-json/sample-4.json'
+        input_json_path = 'samples/sample-json/sample-6.json'
         output_dir = 'samples/sample-image-outputs'
         
         # Create output directory if it doesn't exist (belt-and-suspenders)

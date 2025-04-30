@@ -2,6 +2,19 @@ import json
 import os
 from typing import Dict, Any, Tuple, Optional
 import re # Add re import
+import logging # Import logging
+
+logger = logging.getLogger(__name__) # Setup logger for helpers
+
+def contains_devanagari(text: str) -> bool:
+    """Check if the text contains characters in the Devanagari Unicode range."""
+    # Devanagari range: U+0900 to U+097F
+    if not isinstance(text, str): # Add type check
+        return False
+    for char in text:
+        if '\u0900' <= char <= '\u097F':
+            return True
+    return False
 
 def load_json_file(file_path: str) -> Dict[str, Any]:
     """Load JSON data from a file"""
@@ -31,57 +44,80 @@ def validate_json_structure(json_data: Dict[str, Any]) -> bool:
     
     return True 
 
-def parse_color(color_string: str) -> Optional[str]:
-    """Parse various color string formats and return a hex color string (#RRGGBB or #RRGGBBAA)."""
-    color_string = color_string.strip().lower()
-    
-    r, g, b, a = -1, -1, -1, 255 # Default alpha to opaque
-    
-    # Hex codes (#rgb, #rrggbb, #rrggbbaa)
-    if color_string.startswith('#'):
-        hex_color = color_string[1:]
-        if len(hex_color) == 3: # rgb
-            r, g, b = [int(c * 2, 16) for c in hex_color]
-            a = 255
-        elif len(hex_color) == 6: # rrggbb
-            r, g, b = [int(hex_color[i:i+2], 16) for i in (0, 2, 4)]
-            a = 255
-        elif len(hex_color) == 8: # rrggbbaa
-            r, g, b, a = [int(hex_color[i:i+2], 16) for i in (0, 2, 4, 6)]
-            
-    # rgba(r, g, b, a) - alpha 0.0-1.0
-    match_rgba = re.match(r'rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)', color_string)
-    if match_rgba:
-        r, g, b = map(int, match_rgba.groups()[:3])
-        a_float = float(match_rgba.group(4))
-        a = int(max(0, min(1, a_float)) * 255) # Clamp alpha 0-1 and convert to 0-255
-        
-    # rgb(r, g, b)
-    match_rgb = re.match(r'rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)', color_string)
-    if match_rgb:
-        r, g, b = map(int, match_rgb.groups())
-        a = 255
-        
-    # Simple color names 
-    simple_colors = {
-        'black': (0, 0, 0, 255),
-        'white': (255, 255, 255, 255),
-        'red': (255, 0, 0, 255),
-        'green': (0, 128, 0, 255),
-        'blue': (0, 0, 255, 255),
-        'transparent': (0, 0, 0, 0)
-    }
-    if color_string in simple_colors:
-        r, g, b, a = simple_colors[color_string]
-        
-    # Check if any parsing succeeded and values are valid
-    if all(0 <= val <= 255 for val in [r, g, b, a]) and r != -1:
-         # Format as hex
-         if a == 255:
-             return f"#{r:02x}{g:02x}{b:02x}".upper()
-         else:
-             return f"#{r:02x}{g:02x}{b:02x}{a:02x}".upper()
-    else:
-        # Could not parse or invalid values found
-        print(f"Warning: Could not parse color '{color_string}' into valid RGBA.")
-        return None # Indicate failure to parse 
+def parse_color(color_str: str, default_color: Tuple[int, int, int, int] = (0, 0, 0, 255)) -> Tuple[int, int, int, int]:
+    """Parses a color string (hex, rgb, rgba) into an RGBA tuple."""
+    if not isinstance(color_str, str):
+        logger.warning(f"Invalid color type provided: {type(color_str)}. Using default.")
+        return default_color
+
+    color_str = color_str.strip().lower()
+
+    # Try parsing HEX (#RRGGBB or #RRGGBBAA)
+    if color_str.startswith('#'):
+        hex_val = color_str[1:]
+        logger.debug(f"Attempting HEX parse for: {color_str}")
+        try:
+            if len(hex_val) == 6:
+                r = int(hex_val[0:2], 16)
+                g = int(hex_val[2:4], 16)
+                b = int(hex_val[4:6], 16)
+                return (r, g, b, 255)
+            elif len(hex_val) == 8:
+                r = int(hex_val[0:2], 16)
+                g = int(hex_val[2:4], 16)
+                b = int(hex_val[4:6], 16)
+                a = int(hex_val[6:8], 16)
+                return (r, g, b, a)
+        except ValueError:
+            logger.warning(f"Invalid hex color format: '{color_str}'. Using default.")
+            return default_color
+
+    # Try parsing rgba(r, g, b, a)
+    rgba_match = re.match(r'rgba\(\s*(\d+%?)\s*,\s*(\d+%?)\s*,\s*(\d+%?)\s*,\s*(\d*[.]?\d+)\s*\)', color_str)
+    logger.debug(f"Attempting RGBA parse for: {color_str}, Match: {bool(rgba_match)}")
+    if rgba_match:
+        try:
+            r_str, g_str, b_str, a_str = rgba_match.groups()
+            logger.debug(f"RGBA Groups: r='{r_str}', g='{g_str}', b='{b_str}', a='{a_str}'")
+            r = int(r_str.rstrip('%'))
+            g = int(g_str.rstrip('%'))
+            b = int(b_str.rstrip('%'))
+            a = float(a_str) # Alpha is 0.0 to 1.0
+            # Clamp values
+            r = max(0, min(255, r))
+            g = max(0, min(255, g))
+            b = max(0, min(255, b))
+            a_int = int(max(0.0, min(1.0, a)) * 255)
+            logger.debug(f"RGBA Parsed Tuple: ({r}, {g}, {b}, {a_int})")
+            return (r, g, b, a_int)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid rgba color format: '{color_str}'. Error: {e}. Using default.")
+            logger.debug(f"Returning default color: {default_color}")
+            return default_color
+
+    # Try parsing rgb(r, g, b)
+    rgb_match = re.match(r'rgb\(\s*(\d+%?)\s*,\s*(\d+%?)\s*,\s*(\d+%?)\s*\)', color_str)
+    logger.debug(f"Attempting RGB parse for: {color_str}, Match: {bool(rgb_match)}")
+    if rgb_match:
+        try:
+            r_str, g_str, b_str = rgb_match.groups()
+            logger.debug(f"RGB Groups: r='{r_str}', g='{g_str}', b='{b_str}'")
+            r = int(r_str.rstrip('%'))
+            g = int(g_str.rstrip('%'))
+            b = int(b_str.rstrip('%'))
+            # Clamp values
+            r = max(0, min(255, r))
+            g = max(0, min(255, g))
+            b = max(0, min(255, b))
+            logger.debug(f"RGB Parsed Tuple: ({r}, {g}, {b}, 255)")
+            return (r, g, b, 255) # Return RGBA with full opacity
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid rgb color format: '{color_str}'. Error: {e}. Using default.")
+            logger.debug(f"Returning default color: {default_color}")
+            return default_color
+
+    # If no format matches
+    logger.debug(f"No color format matched for: {color_str}")
+    logger.warning(f"Unrecognized color format: '{color_str}'. Using default.")
+    logger.debug(f"Returning default color: {default_color}")
+    return default_color 
