@@ -121,3 +121,39 @@ def parse_color(color_str: str, default_color: Tuple[int, int, int, int] = (0, 0
     logger.warning(f"Unrecognized color format: '{color_str}'. Using default.")
     logger.debug(f"Returning default color: {default_color}")
     return default_color 
+
+def rgba_to_svg_rgba(rgba_tuple: Tuple[int, int, int, int]) -> str:
+    """Converts an RGBA tuple (0-255) to an SVG rgba string (alpha 0.0-1.0)."""
+    if not (isinstance(rgba_tuple, tuple) and len(rgba_tuple) == 4 and all(isinstance(c, int) for c in rgba_tuple)):
+        logger.warning(f"Invalid RGBA tuple for SVG conversion: {rgba_tuple}. Using default black.")
+        return "rgba(0,0,0,1.0)"
+    r, g, b, a = rgba_tuple
+    # Clamp values just in case
+    r = max(0, min(255, r))
+    g = max(0, min(255, g))
+    b = max(0, min(255, b))
+    a_float = round(max(0, min(255, a)) / 255.0, 4) # Convert alpha to 0.0-1.0 and round
+    return f"rgba({r},{g},{b},{a_float})"
+
+def hex_to_rgba_string(hex_color: str) -> Optional[str]:
+    """Converts a hex color string (#RRGGBB or #RRGGBBAA) to an SVG rgba string."""
+    if not isinstance(hex_color, str) or not hex_color.startswith('#'):
+        return None
+    hex_val = hex_color.lstrip('#')
+    try:
+        if len(hex_val) == 6:
+            r = int(hex_val[0:2], 16)
+            g = int(hex_val[2:4], 16)
+            b = int(hex_val[4:6], 16)
+            return f"rgba({r},{g},{b},1.0)" # Full opacity
+        elif len(hex_val) == 8:
+            r = int(hex_val[0:2], 16)
+            g = int(hex_val[2:4], 16)
+            b = int(hex_val[4:6], 16)
+            a = int(hex_val[6:8], 16)
+            a_float = round(a / 255.0, 4)
+            return f"rgba({r},{g},{b},{a_float})"
+        else:
+            return None # Invalid length
+    except ValueError:
+        return None # Invalid hex characters 

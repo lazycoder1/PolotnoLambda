@@ -69,7 +69,7 @@ class ImageProcessor:
                              
                         logger.debug(f"Processing element {element_id} of type {element_type}")
                         if element_type == 'figure':
-                            process_figure(child, draw)
+                            process_figure(child, canvas)
                         elif element_type == 'image':
                             # Process image normally
                             img, position = process_image(child) 
