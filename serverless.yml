@@ -1,0 +1,136 @@
+service: marketing-image-generation
+useDotenv: true # Enable loading of .env file for local development
+
+
+provider:
+  name: aws
+  runtime: python3.9 # This is a default, will be overridden by image setting for the function
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-south-1'} # Or your preferred region
+  environment:
+    SQS_QUEUE_URL: !Ref MarketingImageGenerationQueue
+    DLQ_URL: !Ref MarketingImageGenerationDLQ # For reference, not directly used by lambda to send
+    DB_HOST: ${env:DB_HOST, "your_db_host_goes_here"} # Example: use .env file or set directly
+    DB_PORT: ${env:DB_PORT, "5432"}
+    DB_NAME: ${env:DB_NAME, "postgres"}
+    DB_USER: ${env:DB_USER, "postgres"}
+    DB_PASSWORD: ${env:DB_PASSWORD, "your_password_goes_here"} # Be careful with committing actual passwords
+    AUTH0_DOMAIN: ${env:AUTH0_DOMAIN, ""} # Now from environment
+    AUTH0_AUDIENCE: ${env:AUTH0_AUDIENCE, ""} # Now from environment
+    S3_IMAGE_OUTPUT_BUCKET: ${env:S3_IMAGE_OUTPUT_BUCKET, ""} # Now from environment
+    GOOGLE_API_KEY: ${env:GOOGLE_API_KEY, ""} # Loaded from .env for local, set in Lambda env for deployed
+    FONT_S3_BUCKET: ${env:FONT_S3_BUCKET, "upwork-fonts-assets"} # Loaded from .env, defaults if not set
+    # FONT_S3_CACHE_BUCKET: ${ssm:/marketing-image-gen/${self:provider.stage}/font_s3_cache_bucket, ""} # If ImageProcessor uses it
+    # GOOGLE_API_KEY_SECRET_ARN: ${ssm:/marketing-image-gen/${self:provider.stage}/google_api_key_secret_arn, ""} # If ImageProcessor uses it & key is in SecretsManager
+    LOG_LEVEL: DEBUG # Or INFO, WARNING
+
+  iamRoleStatements: # Corrected placement for Serverless Framework v1.x+, for v3+ it's provider.iam.role.statements
+    - Effect: Allow
+      Action:
+        - sqs:ReceiveMessage
+        - sqs:DeleteMessage
+        - sqs:GetQueueAttributes
+      Resource: !GetAtt MarketingImageGenerationQueue.Arn
+    - Effect: Allow 
+      Action:
+        - sqs:SendMessage
+      Resource: !GetAtt MarketingImageGenerationQueue.Arn
+    - Effect: Allow 
+      Action:
+        - sqs:SendMessage 
+      Resource: !GetAtt MarketingImageGenerationDLQ.Arn 
+    # - Effect: Allow # Removed Secrets Manager permission for DB creds
+    #   Action:
+    #     - secretsmanager:GetSecretValue
+    #   Resource: 
+    #     - ${ssm:/marketing-image-gen/${self:provider.stage}/db_credentials_secret_arn, ""}
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl # Optional: if you need to set specific ACLs
+      Resource: 
+        - arn:aws:s3:::${self:provider.environment.S3_IMAGE_OUTPUT_BUCKET}/*
+    # If FontManager in ImageProcessor caches fonts to S3:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:PutObjectAcl # Optional: if you need to set specific ACLs for fonts
+      Resource: 
+        - arn:aws:s3:::${self:provider.environment.FONT_S3_BUCKET}/* # Use the FONT_S3_BUCKET env var
+    # Standard CloudWatch Logs permissions are usually added by default by Serverless Framework
+    # If Lambda is in a VPC to access the DB:
+    # - Effect: Allow
+    #   Action:
+    #     - ec2:CreateNetworkInterface
+    #     - ec2:DescribeNetworkInterfaces
+    #     - ec2:DeleteNetworkInterface
+    #   Resource: "*"
+
+  # ECR configuration for the Docker image
+  ecr:
+    images:
+      appimage: # Logical name for the image
+        path: ./ # Path to the directory containing the Dockerfile
+        # file: Dockerfile # Optional: Specify if Dockerfile has a different name
+        platform: linux/amd64 # Important for Lambda compatibility
+
+functions:
+  imageGenerator:
+    # handler: main.lambda_handler # REMOVE for image-based deployment
+    # runtime: python3.9 # REMOVE for image-based deployment - image defines runtime
+    image:
+      name: appimage # Correctly refers to the logical image name defined in provider.ecr.images
+    memorySize: 512 # Adjust as needed
+    timeout: 300    # Adjust as needed (max 900 seconds)
+    events:
+      - sqs:
+          arn: !GetAtt MarketingImageGenerationQueue.Arn
+          batchSize: 5 # Number of messages to pull at once, adjust based on processing time & volume
+          # maximumBatchingWindow: 60 # Optional: Max time to wait before invoking with fewer than batchSize messages
+    # vpc: # Uncomment and configure if your PostgreSQL DB is in a VPC
+    #   securityGroupIds:
+    #     - sg-xxxxxxxxxxxxxxxxx # Your Lambda security group
+    #   subnetIds:
+    #     - subnet-xxxxxxxxxxxxxxxxx # Private subnet 1
+    #     - subnet-xxxxxxxxxxxxxxxxx # Private subnet 2
+
+resources:
+  Resources:
+    MarketingImageGenerationQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: MarketingImageGenerationQueue-${self:provider.stage}
+        VisibilityTimeout: 360 # Should be >= Lambda timeout + buffer
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt MarketingImageGenerationDLQ.Arn
+          maxReceiveCount: 3 # Number of retries before sending to DLQ
+        # FifoQueue: false # Set to true if you need FIFO, but that has other implications
+        # ContentBasedDeduplication: false # If FIFO
+
+    MarketingImageGenerationDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: MarketingImageGenerationDLQ-${self:provider.stage}
+        MessageRetentionPeriod: 1209600 # 14 days (max)
+
+# package: # Not typically needed for ECR image deployments
+#  include:
+#    - main.py
+#    - image_processor/**
+#  exclude:
+#    - node_modules/**
+#    - .vscode/**
+
+plugins:
+  [] # No plugins needed if deploying via ECR and Dockerfile handles dependencies
+  # - serverless-python-requirements # REMOVE if using ECR image deployment
+
+# custom: # REMOVE if serverless-python-requirements is not used
+#   pythonRequirements: # For serverless-python-requirements plugin
+#     dockerizePip: non-linux # Or true if you're on Linux/WSL and match Lambda env
+#     zip: true
+#     # layer: true # Optional: use layers for dependencies
+#     # requirementsPath: requirements.txt
+
+# Removed empty plugins and custom sections 

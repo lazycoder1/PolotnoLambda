@@ -14,8 +14,11 @@ from .logger import get_logger
 
 logger = get_logger(__name__)
 
-def load_image_from_url(url: str) -> Image.Image:
-    """Load image from URL and return PIL Image object"""
+def load_image_from_url(url: str) -> Optional[Image.Image]:
+    """Load image from URL and return PIL Image object, or None if URL is invalid/empty."""
+    if not url or not isinstance(url, str) or not (url.startswith('http://') or url.startswith('https://')):
+        logger.warning(f"Invalid or empty image URL provided: '{url}'. Skipping load.")
+        return None
     try:
         response = requests.get(url)
         response.raise_for_status()  # Raise exception for bad responses
@@ -31,15 +34,21 @@ def load_image_from_url(url: str) -> Image.Image:
         logger.error(f"Error processing image from URL '{url}': {e}")
         raise
 
-def process_image(image_data: Dict[str, Any]) -> Tuple[Image.Image, Tuple[int, int]]:
-    """Process a single image with all its properties"""
+def process_image(image_data: Dict[str, Any]) -> Optional[Tuple[Image.Image, Tuple[int, int]]]:
+    """Process a single image with all its properties. Returns None if image cannot be processed."""
     try:
         # Validate input
-        if not isinstance(image_data, dict) or 'src' not in image_data:
-            raise ValueError("Invalid image data: missing 'src' field")
+        src_url = image_data.get('src')
+        if not isinstance(image_data, dict) or not src_url:
+            logger.warning(f"Invalid image data: missing or empty 'src' field for element ID {image_data.get('id', 'N/A')}. Skipping image.")
+            return None
             
         # Load the image
-        img = load_image_from_url(image_data['src'])
+        img = load_image_from_url(src_url)
+        
+        if img is None:
+            logger.warning(f"Image could not be loaded from src: '{src_url}' for element ID {image_data.get('id', 'N/A')}. Skipping image.")
+            return None
         
         # Get original dimensions for proper scaling
         orig_width, orig_height = img.size
@@ -129,4 +138,4 @@ def process_image(image_data: Dict[str, Any]) -> Tuple[Image.Image, Tuple[int, i
         
     except Exception as e:
         logger.error(f"Error processing image {image_data.get('src', 'unknown')}: {str(e)}")
-        raise 
+        return None 

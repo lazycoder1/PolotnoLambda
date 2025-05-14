@@ -16,8 +16,6 @@ CONFIG = {
     'fonts': {
         'default_font': 'Arial',
         'default_size': 12,
-        'fallback_font': 'DejaVuSans.ttf',
-        'primary_devanagari_family': 'kohinoor'
     },
     'debug': {
         'verbose_logging': True

@@ -8,3 +8,71 @@ wheels/
 
 # Virtual environments
 .venv
+.env
+
+# Byte-compiled / optimized / DLL files
+*.pyo
+*.pyd
+*.egg
+*.whl
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+develop-eggs/
+eggs/
+sdist/
+var/
+*.tar.gz
+*.zip
+
+# PyInstaller
+# *.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+pytestdebug.log
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environments (duplicates existing .venv, keeping others)
+# .venv # Already present
+env/
+ENV/
+
+# Serverless Framework specific
+.serverless/
+
+# IDE settings & metadata
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+
+node_modules/*

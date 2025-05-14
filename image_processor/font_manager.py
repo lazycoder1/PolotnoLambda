@@ -1,417 +1,270 @@
 """
 Font management module for the image processor.
-Handles font discovery, loading, selection, and Devanagari script detection.
+Handles font fetching from Google Fonts API, S3 storage, and Lambda /tmp caching.
 """
 
 import os
-import re
 import logging
-from collections import defaultdict
-from typing import Dict, Tuple, Optional, Any
+from typing import Optional
 from PIL import ImageFont
-import json # Keep for debug logging if needed
-from utils.helpers import contains_devanagari # Import from helpers
-from .config import CONFIG # <--- Import CONFIG
+import requests
+import boto3
+from botocore.exceptions import ClientError
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
 
 # Constants
-FONT_DIR = 'fonts'
-# DEVANAGARI_FAMILY = 'notosansdevanagari' # <-- Remove hardcoded constant
-WEIGHT_KEYWORDS = {'thin', 'extralight', 'light', 'regular', 'medium', 'semibold', 'bold', 'extrabold', 'black', 'heavy'}
-STYLE_KEYWORDS = {'italic', 'oblique'}
-NORMAL_WEIGHTS = {'normal', 'regular'} # Treat regular as normal
+TMP_DIR = "/tmp"
+DEFAULT_FONT_S3_PREFIX = "fonts/"
+DEFAULT_FONT_PATH = "fonts/Roboto-Regular.ttf"  # Default relative to project root
+
+# Variant mapping from common names to Google Fonts API names
+VARIANT_MAPPING = {
+    "Regular": "regular",
+    "Italic": "italic",
+    "Bold": "700",
+    "Bold Italic": "700italic",
+    "Light": "300",
+    "Light Italic": "300italic",
+    "Medium": "500",
+    "Medium Italic": "500italic",
+    "SemiBold": "600",
+    "SemiBold Italic": "600italic",
+    "ExtraBold": "800",
+    "ExtraBold Italic": "800italic",
+    "Black": "900",
+    "Black Italic": "900italic",
+    # Add numeric weights directly
+    **{str(w): str(w) for w in range(100, 1000, 100)},
+    **{str(w) + "italic": str(w) + "italic" for w in range(100, 1000, 100)},
+}
 
 class FontManager:
     """
-    Manages available fonts, providing selection logic based on text properties.
-
-    Attributes:
-        _font_map (Optional[Dict]): Lazily loaded map of available fonts.
-                                     Structure: {family_lower: {style_weight_lower: path}}
-        _default_font (Optional[ImageFont.FreeTypeFont]): Lazily loaded default Pillow font.
+    Manages font fetching from Google Fonts API, S3 storage, and Lambda /tmp caching.
     """
-    _font_map: Optional[Dict[str, Dict[str, str]]] = None
-    _default_font: Optional[ImageFont.FreeTypeFont] = None
 
-    # --- Public API ---
-
-    @classmethod
-    def select_font(cls, text_data: Dict[str, Any], font_size: int) -> Tuple[Optional[ImageFont.FreeTypeFont], str]:
+    def __init__(self, s3_bucket_name: str, google_api_key: str, default_font_path: str = None):
         """
-        Selects the appropriate font based on text properties and language.
-
-        Checks for Devanagari script and prioritizes the DEVANAGARI_FAMILY.
-        Falls back to requested font, then default font.
-
-        NOTE: For complex scripts like Devanagari, ensure 'libraqm' library is
-              installed and accessible by Pillow for proper rendering of conjuncts.
-              Check Pillow documentation for enabling Raqm support. Run:
-              `from PIL import features; print(features.check('raqm'))`
+        Initialize FontManager with S3 bucket name and Google API key.
 
         Args:
-            text_data: Dictionary containing text properties like 'text',
-                       'fontFamily', 'fontWeight', 'fontStyle'.
-            font_size: The desired font size.
+            s3_bucket_name: Name of the S3 bucket where fonts are stored
+            google_api_key: Google Fonts API key for fetching fonts
+            default_font_path: Path to the default font to use when all other strategies fail
+        """
+        self.s3_bucket_name = s3_bucket_name
+        self.google_api_key = google_api_key
+        self.s3_client = boto3.client("s3")
+
+        # Set default font path (use provided path or compute from current directory)
+        if default_font_path:
+            self.default_font_path = default_font_path
+        else:
+            self.default_font_path = os.path.join(os.getcwd(), DEFAULT_FONT_PATH)
+            
+        # Check if default font exists 
+        if not os.path.exists(self.default_font_path):
+            logger.warning(
+                f"Default font not found at {self.default_font_path}. "
+                f"Fallback to this font may fail if Google Fonts API and S3 strategies fail."
+            )
+
+        if not os.path.exists(TMP_DIR):
+            os.makedirs(TMP_DIR, exist_ok=True)
+        
+        if not self.google_api_key:
+            logger.warning(
+                "FontManager initialized without a GOOGLE_API_KEY. "
+                "Fetching new fonts from Google Fonts will fail. "
+                "Font retrieval will rely on S3 and default font fallback."
+            )
+
+    def get_font(self, family_name: str, variant_name: str = "Regular", font_size: int = 12) -> Optional[ImageFont.FreeTypeFont]:
+        """
+        Get a font from cache, S3, Google Fonts API, or default font.
+
+        Args:
+            family_name: Font family name (e.g., "Roboto")
+            variant_name: Font variant (e.g., "Regular", "Bold")
+            font_size: Font size in points
 
         Returns:
-            A tuple containing the loaded PIL ImageFont object (or None)
-            and a string describing the font source (e.g., "map (family weight)", "default").
+            PIL ImageFont object or None if font cannot be loaded
         """
-        text = text_data.get('text', '')
-        if not text:
-            return None, "empty text"
-
-        req_family = text_data.get('fontFamily', 'Arial').lower()
-        req_weight = text_data.get('fontWeight', 'normal').lower()
-        req_style = text_data.get('fontStyle', 'normal').lower()
-
-        # Normalize weight aliases
-        if req_weight in NORMAL_WEIGHTS:
-            req_weight = 'normal'
-
-        font = None
-        font_path = None
-        source_info = "unknown"
-
-        # 1. Check for Devanagari script
-        if contains_devanagari(text):
-            preferred_dev_family = CONFIG['fonts'].get('primary_devanagari_family', 'notosansdevanagari').lower()
-            logger.debug(f"Devanagari detected in '{text[:20]}...'. Prioritizing '{preferred_dev_family}'.")
-            font_path = cls._find_font_path(preferred_dev_family, req_weight, 'normal') # Devanagari fonts usually aren't italic
-            if font_path:
-                font = cls._load_font(font_path, font_size)
-                if font:
-                    # Extract actual weight/style from path for better source info
-                    found_weight_style = cls._extract_weight_style_from_path(font_path, req_weight)
-                    source_info = f"map ({preferred_dev_family} {found_weight_style})"
-                    return font, source_info
-                else:
-                    logger.warning(f"Found Devanagari font path '{font_path}' but failed to load.")
+        # Get font file path
+        font_path = self.get_font_path(family_name, variant_name)
+        if not font_path:
+            logger.error(f"Could not get font path for {family_name} {variant_name}. Will try default font.")
+            if os.path.exists(self.default_font_path):
+                logger.info(f"Using default font at {self.default_font_path}")
+                font_path = self.default_font_path
             else:
-                logger.warning(f"Devanagari detected, but no suitable font found for family '{preferred_dev_family}'.")
+                logger.error(f"Default font at {self.default_font_path} is not accessible.")
+                return None
 
-        # 2. Try requested font family/weight/style if Devanagari not needed or not found
-        if font is None:
-            logger.debug(f"Attempting requested font: Family='{req_family}', Weight='{req_weight}', Style='{req_style}'")
-            font_path = cls._find_font_path(req_family, req_weight, req_style)
-            if font_path:
-                font = cls._load_font(font_path, font_size)
-                if font:
-                    found_weight_style = cls._extract_weight_style_from_path(font_path, f"{req_weight}-{req_style}" if req_style != 'normal' else req_weight)
-                    source_info = f"map ({req_family} {found_weight_style})"
-                    return font, source_info
-                else:
-                    logger.warning(f"Found requested font path '{font_path}' but failed to load.")
-
-        # 3. Fallback to default font
-        if font is None:
-            logger.warning(f"Could not find/load specific font for: Family='{req_family}', Weight='{req_weight}', Style='{req_style}'. Falling back to default.")
-            default_font = cls.get_default_font()
-            if default_font:
-                return default_font, "Pillow default"
-            else:
-                logger.error("Failed to load even the default Pillow font.")
-                return None, "error loading default"
-
-        # Should technically not be reached if default font logic works
-        return font, source_info
-
-    @staticmethod
-    def contains_devanagari(text: str) -> bool:
-        """
-        Checks if the text contains characters in the Devanagari Unicode range.
-
-        Args:
-            text: The string to check.
-
-        Returns:
-            True if Devanagari characters are found, False otherwise.
-        """
-        # Devanagari range: U+0900 to U+097F
-        for char in text:
-            if '\u0900' <= char <= '\u097F':
-                return True
-        return False
-
-    # --- Internal Helpers & Initialization ---
-
-    @classmethod
-    def get_font_map(cls) -> Dict[str, Dict[str, str]]:
-        """
-        Gets the font map, building it on first access.
-
-        Returns:
-            The font map dictionary.
-        """
-        if cls._font_map is None:
-            cls._build_font_map()
-        # Ensure _font_map is not None after build attempt, return empty if build failed
-        return cls._font_map if cls._font_map is not None else {}
-
-    @classmethod
-    def get_default_font(cls) -> Optional[ImageFont.FreeTypeFont]:
-        """
-        Gets the default Pillow font, loading it on first access.
-
-        Returns:
-            The default ImageFont object or None if loading fails.
-        """
-        if cls._default_font is None:
-            try:
-                logger.debug("Loading Pillow default font.")
-                cls._default_font = ImageFont.load_default()
-            except Exception as e:
-                logger.error(f"Failed to load Pillow default font: {e}")
-                cls._default_font = None # Ensure it remains None on failure
-        return cls._default_font
-
-    @classmethod
-    def _build_font_map(cls) -> None:
-        """
-        Scans the FONT_DIR directory and builds the _font_map cache.
-        Prioritizes the DEVANAGARI_FAMILY subdirectory.
-        """
-        logger.info(f"Building font map from directory: '{FONT_DIR}'")
-        cls._font_map = defaultdict(dict)
-        if not os.path.isdir(FONT_DIR):
-            logger.error(f"Font directory '{FONT_DIR}' not found. Cannot build font map.")
-            return
-
-        preferred_dev_family = CONFIG['fonts'].get('primary_devanagari_family', 'notosansdevanagari').lower()
-
-        scan_order = []
-        # 1. Prioritize Devanagari directory if it exists
-        devanagari_path = os.path.join(FONT_DIR, preferred_dev_family)
-        if os.path.isdir(devanagari_path):
-            logger.debug(f"Prioritizing scan of: '{devanagari_path}'")
-            scan_order.append(devanagari_path)
-
-        # 2. Add other top-level items from FONT_DIR
-        for item in os.listdir(FONT_DIR):
-            item_path = os.path.join(FONT_DIR, item)
-            # Add if it's a file or a directory not already prioritized
-            if item_path not in scan_order and (os.path.isfile(item_path) or os.path.isdir(item_path)):
-                 scan_order.append(item_path)
-
-        # 3. Scan paths in defined order
-        found_count = 0
-        processed_files = set() # Avoid processing duplicates if structure is odd
-        for path_to_scan in scan_order:
-             if os.path.isdir(path_to_scan):
-                 for root, _, files in os.walk(path_to_scan):
-                     for filename in files:
-                         if filename.lower().endswith('.ttf'):
-                            file_path = os.path.join(root, filename)
-                            if file_path not in processed_files:
-                                if cls._parse_and_add_font(file_path):
-                                     found_count += 1
-                                processed_files.add(file_path)
-             elif os.path.isfile(path_to_scan) and path_to_scan.lower().endswith('.ttf'):
-                 if path_to_scan not in processed_files:
-                     if cls._parse_and_add_font(path_to_scan):
-                         found_count += 1
-                     processed_files.add(path_to_scan)
-
-
-        logger.info(f"Font map build complete. Found {found_count} unique font files.")
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Built Font Map:\n{json.dumps(cls._font_map, indent=2)}")
-
-
-    @classmethod
-    def _parse_and_add_font(cls, file_path: str) -> bool:
-        """
-        Parses font filename to determine family, weight, and style, then adds to map.
-
-        Args:
-            file_path: The full path to the font file.
-
-        Returns:
-            True if font was successfully parsed and added, False otherwise.
-        """
+        # Load font with PIL
         try:
-            filename = os.path.basename(file_path)
-            base_name = os.path.splitext(filename)[0]
-
-            # Simple parsing: split by common separators, identify keywords
-            parts = re.split(r'[-_ ]', base_name)
-            family_parts = []
-            found_weight = 'normal'
-            found_style = 'normal'
-
-            # Iterate backwards to find style/weight keywords first
-            remaining_parts = parts[:]
-            for part in reversed(parts):
-                part_lower = part.lower()
-                if part_lower in STYLE_KEYWORDS:
-                    if found_style == 'normal': # Keep first style found (e.g., Italic over Oblique if both present)
-                         found_style = part_lower
-                    remaining_parts.pop()
-                elif part_lower in WEIGHT_KEYWORDS:
-                    if found_weight == 'normal': # Keep first weight found
-                        found_weight = part_lower
-                    remaining_parts.pop()
-                elif found_style != 'normal' and found_weight != 'normal':
-                     # Stop if we already found both, remaining must be family
-                     break
-
-            # Normalize weight
-            if found_weight in NORMAL_WEIGHTS:
-                 found_weight = 'normal'
-
-            # Construct family name from remaining parts
-            family_name = "".join(remaining_parts) if remaining_parts else base_name # Fallback to base if parsing fails
-            family_lower = family_name.lower()
-
-            # Generate style key (e.g., "normal", "bold", "normal-italic", "bold-italic")
-            style_key = found_weight
-            if found_style != 'normal':
-                style_key = f"{found_weight}-{found_style}"
-
-            if family_lower and style_key:
-                # Special handling for prioritized Devanagari family
-                preferred_dev_family_from_config = CONFIG['fonts'].get('primary_devanagari_family', '').lower()
-                # If a specific devanagari family is configured AND the parsed family name contains it,
-                # use the configured name as the key. Otherwise, use the parsed name.
-                map_family_key = preferred_dev_family_from_config \
-                    if preferred_dev_family_from_config and preferred_dev_family_from_config in family_lower \
-                    else family_lower
-
-                if style_key not in cls._font_map[map_family_key]:
-                    cls._font_map[map_family_key][style_key] = file_path
-                    logger.debug(f"Mapped: '{filename}' -> Family: '{map_family_key}', StyleKey: '{style_key}', Path: '{file_path}'")
-
-                    # Add alias for regular -> normal if it's a normal weight font
-                    if found_weight == 'normal' and found_style == 'normal' and 'regular' not in cls._font_map[map_family_key]:
-                         cls._font_map[map_family_key]['regular'] = file_path # Alias regular to normal path
-                    return True
-                else:
-                    logger.debug(f"Skipping duplicate style key '{style_key}' for family '{map_family_key}'. Existing path: '{cls._font_map[map_family_key][style_key]}'")
-                    return False
-            else:
-                 logger.warning(f"Could not parse family/style from font filename: '{filename}'")
-                 return False
-
-        except Exception as e:
-            logger.error(f"Error parsing font file '{file_path}': {e}")
-            return False
-
-
-    @classmethod
-    def _find_font_path(cls, family_lower: str, weight_lower: str, style_lower: str) -> Optional[str]:
-        """
-        Finds the font path in the map with fallback logic.
-
-        Fallback Order:
-        1. Exact match (e.g., bold-italic)
-        2. Weight match, normal style (e.g., bold)
-        3. Normal weight, exact style (e.g., normal-italic)
-        4. Normal weight, normal style (e.g., normal)
-        5. Any available style/weight for the family.
-
-        Args:
-            family_lower: Lowercase font family name.
-            weight_lower: Lowercase font weight ('normal', 'bold', etc.).
-            style_lower: Lowercase font style ('normal', 'italic').
-
-        Returns:
-            The font file path string, or None if not found.
-        """
-        font_map = cls.get_font_map()
-        if family_lower not in font_map:
-            return None
-
-        family_styles = font_map[family_lower]
-
-        # Determine target style key (e.g., "bold-italic" or "bold")
-        target_key = weight_lower
-        if style_lower != 'normal':
-            target_key = f"{weight_lower}-{style_lower}"
-
-        # Fallback keys in order of preference
-        fallback_keys = [
-            target_key,                             # 1. Exact match
-            weight_lower,                           # 2. Weight match, normal style
-        ]
-        if style_lower != 'normal':               # 3. Normal weight, exact style (if italic requested)
-             fallback_keys.append(f"normal-{style_lower}")
-        fallback_keys.append("normal")              # 4. Normal weight, normal style
-
-        # Try fallbacks
-        for key in fallback_keys:
-            if key in family_styles:
-                logger.debug(f"Found font path for '{family_lower}' using key '{key}'.")
-                return family_styles[key]
-
-        # 5. Any available style as last resort
-        if family_styles:
-            first_available_key = next(iter(family_styles))
-            logger.debug(f"No specific match for '{family_lower}' '{target_key}'. Falling back to first available: '{first_available_key}'.")
-            return family_styles[first_available_key]
-
-        logger.warning(f"No font files found in map for family '{family_lower}'.")
-        return None
-
-    @staticmethod
-    def _load_font(path: str, size: int) -> Optional[ImageFont.FreeTypeFont]:
-        """Loads a font file using PIL, handling errors."""
-        if not path or not os.path.exists(path):
-            logger.error(f"Font path is invalid or file does not exist: '{path}'")
-            return None
-        try:
-            font = ImageFont.truetype(path, size)
-            logger.debug(f"Successfully loaded font: '{path}' size: {size}")
+            font = ImageFont.truetype(font_path, font_size)
+            logger.info(f"Successfully loaded font: {font_path} size: {font_size}")
             return font
         except Exception as e:
-            logger.error(f"Failed to load font '{path}' with size {size}: {e}")
+            logger.error(f"Failed to load font {font_path} with size {font_size}: {e}")
+            
+            # If loading the requested or default font failed, try PIL's default font
+            try:
+                logger.warning("Attempting to use Pillow's built-in default font.")
+                return ImageFont.load_default()
+            except Exception as e_default:
+                logger.error(f"Failed to load even Pillow's default font: {e_default}")
+                return None
+
+    def get_font_path(self, family_name: str, variant_name: str = "Regular") -> Optional[str]:
+        """
+        Get the path to a font file, fetching it if necessary.
+
+        Args:
+            family_name: Font family name
+            variant_name: Font variant name
+
+        Returns:
+            Path to the font file or None if font cannot be retrieved
+        """
+        api_variant_name = self._get_api_variant_name(variant_name)
+        font_filename = self._generate_font_filename(family_name, api_variant_name)
+        local_font_path = os.path.join(TMP_DIR, font_filename)
+        s3_key = self._get_s3_key(font_filename)
+
+        # 1. Check /tmp cache first
+        if os.path.exists(local_font_path):
+            logger.info(f"Font found in /tmp cache: {local_font_path}")
+            return local_font_path
+
+        # 2. Try S3
+        if self._check_s3_exists(s3_key):
+            if self._download_from_s3(s3_key, local_font_path):
+                return local_font_path
+            logger.warning(f"Failed to download {s3_key} from S3. Attempting Google Fonts.")
+        
+        # 3. Try Google Fonts API
+        font_family_data = self._fetch_from_google_fonts_api(family_name)
+        if font_family_data:
+            files = font_family_data.get("files", {})
+            font_url = files.get(api_variant_name)
+            
+            # Try fallback for common weight variations
+            if not font_url and api_variant_name == "700":  # bold
+                font_url = files.get("regular")
+                if font_url: logger.info(f"Variant '700' (Bold) not found for {family_name}, trying 'regular'.")
+            elif not font_url and api_variant_name == "700italic":
+                font_url = files.get("italic")
+                if font_url: logger.info(f"Variant '700italic' (Bold Italic) not found for {family_name}, trying 'italic'.")
+
+            if font_url:
+                if self._download_font_url(font_url, local_font_path):
+                    self._upload_to_s3(local_font_path, s3_key)
+                    return local_font_path
+            else:
+                logger.warning(f"Variant '{api_variant_name}' not found for family '{family_name}'. Available: {list(files.keys())}")
+        else:
+            logger.warning(f"Font family '{family_name}' not found or error fetching from Google Fonts.")
+
+        # All methods failed - return None, and let get_font handle fallback to default
+        return None
+
+    def _get_api_variant_name(self, client_variant_name: str) -> str:
+        """Convert client-friendly variant name to Google Fonts API variant name."""
+        if isinstance(client_variant_name, str) and client_variant_name.lower() in (v.lower() for v in VARIANT_MAPPING.keys() if not v.isdigit()):
+            normalized_client_variant = client_variant_name.capitalize()
+        else:
+            normalized_client_variant = client_variant_name
+        return VARIANT_MAPPING.get(normalized_client_variant, str(client_variant_name).lower())
+
+    def _generate_font_filename(self, family_name: str, api_variant_name: str) -> str:
+        """Generate a standardized font filename."""
+        safe_family_name = family_name.replace(" ", "")
+        return f"{safe_family_name}-{api_variant_name}.ttf"
+
+    def _get_s3_key(self, font_filename: str) -> str:
+        """Generate the S3 key for the font file."""
+        return f"{DEFAULT_FONT_S3_PREFIX}{font_filename}"
+
+    def _check_s3_exists(self, s3_key: str) -> bool:
+        """Check if a font file exists in S3."""
+        try:
+            self.s3_client.head_object(Bucket=self.s3_bucket_name, Key=s3_key)
+            logger.info(f"Font found in S3: s3://{self.s3_bucket_name}/{s3_key}")
+            return True
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                logger.info(f"Font not found in S3: s3://{self.s3_bucket_name}/{s3_key}")
+                return False
+            else:
+                logger.error(f"Error checking S3 for {s3_key}: {e}")
+                return False
+
+    def _download_from_s3(self, s3_key: str, local_path: str) -> bool:
+        """Download a file from S3 to the local path."""
+        try:
+            self.s3_client.download_file(self.s3_bucket_name, s3_key, local_path)
+            logger.info(f"Successfully downloaded {s3_key} from S3 to {local_path}")
+            return True
+        except ClientError as e:
+            logger.error(f"Error downloading {s3_key} from S3: {e}")
+            return False
+
+    def _fetch_from_google_fonts_api(self, family_name: str) -> Optional[dict]:
+        """Query the Google Fonts API for a font family."""
+        if not self.google_api_key:
+            logger.warning("Cannot fetch from Google Fonts API: API key is missing.")
+            return None
+            
+        api_url = f"https://www.googleapis.com/webfonts/v1/webfonts?key={self.google_api_key}&family={family_name.replace(' ', '+')}"
+        try:
+            response = requests.get(api_url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("items"):
+                return data["items"][0]
+            else:
+                logger.warning(f"Font family '{family_name}' not found in Google Fonts API response.")
+                return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching font '{family_name}' from Google Fonts API: {e}")
+            return None
+        except (KeyError, IndexError, ValueError) as e:
+            logger.error(f"Error parsing Google Fonts API response for '{family_name}': {e}")
             return None
 
-    @staticmethod
-    def _extract_weight_style_from_path(path: str, default: str = "unknown") -> str:
-        """Helper to guess weight/style from path for logging - crude."""
+    def _download_font_url(self, font_url: str, local_path: str) -> bool:
+        """Download a font from a direct URL to a local path."""
         try:
-            basename = os.path.splitext(os.path.basename(path))[0].lower()
-            parts = re.split(r'[-_ ]', basename)
-            style = next((p for p in parts if p in STYLE_KEYWORDS), "normal")
-            weight = next((p for p in parts if p in WEIGHT_KEYWORDS or p in NORMAL_WEIGHTS), "normal")
-            if weight in NORMAL_WEIGHTS: weight = "normal"
-            key = weight
-            if style != 'normal':
-                 key = f"{weight}-{style}"
-            return key
-        except:
-            return default
+            response = requests.get(font_url, stream=True, timeout=20)
+            response.raise_for_status()
+            with open(local_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info(f"Successfully downloaded font from {font_url} to {local_path}")
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error downloading font from URL {font_url}: {e}")
+            if os.path.exists(local_path):
+                try:
+                    os.remove(local_path)
+                except OSError:
+                    pass
+            return False
 
-# Example usage (optional, for testing)
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG) # Enable debug logging for testing
-
-    # Test Devanagari check
-    print(f"Contains Devanagari ('नमस्ते'): {contains_devanagari('नमस्ते')}")
-    print(f"Contains Devanagari ('Hello'): {contains_devanagari('Hello')}")
-
-    # Build and show the map
-    font_map = FontManager.get_font_map()
-    # print("Font Map:", font_map) # Already printed by logger in debug mode
-
-    # Example text data
-    test_text_data_dev = {'text': 'अल्ट्रासॉफ्ट', 'fontFamily': 'Arial', 'fontWeight': 'bold'}
-    test_text_data_eng = {'text': 'Hello World', 'fontFamily': 'Raleway', 'fontWeight': 'bold', 'fontStyle': 'italic'}
-    test_text_data_fallback = {'text': 'Fallback Test', 'fontFamily': 'NonExistentFont', 'fontWeight': 'normal'}
-
-    # Select fonts
-    font_dev, source_dev = FontManager.select_font(test_text_data_dev, 30)
-    print(f"Devanagari Font: {font_dev.path if font_dev else 'None'}, Source: {source_dev}")
-
-    font_eng, source_eng = FontManager.select_font(test_text_data_eng, 30)
-    print(f"English Font: {font_eng.path if font_eng else 'None'}, Source: {source_eng}")
-
-    font_fall, source_fall = FontManager.select_font(test_text_data_fallback, 30)
-    print(f"Fallback Font: {font_fall.path if font_fall else 'None'}, Source: {source_fall}")
-
-    # Check default font caching
-    print("Getting default font again...")
-    default_font = FontManager.get_default_font()
-    print(f"Default Font (again): {default_font.path if default_font else 'None'}") 
+    def _upload_to_s3(self, local_path: str, s3_key: str) -> bool:
+        """Upload a file from the local path to S3."""
+        try:
+            self.s3_client.upload_file(local_path, self.s3_bucket_name, s3_key)
+            logger.info(f"Successfully uploaded {local_path} to s3://{self.s3_bucket_name}/{s3_key}")
+            return True
+        except ClientError as e:
+            logger.error(f"Error uploading {local_path} to S3 ({s3_key}): {e}")
+            return False
+        except FileNotFoundError:
+            logger.error(f"File not found for S3 upload: {local_path}")
+            return False 

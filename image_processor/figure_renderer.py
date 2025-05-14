@@ -7,7 +7,7 @@ import json
 import io
 import re # Use regex again
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageDraw
 # from lxml import etree # Remove lxml import
 # from svglib.svglib import svg2rlg # Remove svglib imports
 # from reportlab.graphics import renderPM
@@ -120,7 +120,6 @@ def process_figure(figure_data: Dict[str, Any], image: Image.Image) -> None:
             except Exception as svg_err:
                  logger.error(f"CairoSVG error rendering {sub_type} for ID {element_id}: {svg_err}")
                  # Fallback: draw a placeholder rectangle
-                 from PIL import ImageDraw # Import only if needed
                  draw_fallback = ImageDraw.Draw(image)
                  draw_fallback.rectangle([x, y, x + width, y + height], outline="red", width=2)
                  logger.info(f"Drew fallback rectangle for failed SVG {element_id}")
@@ -129,13 +128,14 @@ def process_figure(figure_data: Dict[str, Any], image: Image.Image) -> None:
             # Load PNG bytes into a PIL Image
             svg_image = Image.open(io.BytesIO(png_bytes))
 
-            # --- DEBUG: Save intermediate SVG render ---
-            try:
-                debug_filename = f"debug_svg_{element_id}_{sub_type}.png"
-                svg_image.save(debug_filename)
-                logger.info(f"Saved intermediate SVG render for {element_id} to {debug_filename}")
-            except Exception as save_err:
-                logger.error(f"Could not save debug SVG image for {element_id}: {save_err}")
+            # --- REMOVE/DISABLE DEBUG: Save intermediate SVG render ---
+            # try:
+            #     # Save to /tmp if debugging is needed
+            #     debug_filename = os.path.join("/tmp", f"debug_svg_{element_id}_{sub_type}.png") 
+            #     svg_image.save(debug_filename)
+            #     logger.info(f"Saved intermediate SVG render for {element_id} to {debug_filename}")
+            # except Exception as save_err:
+            #     logger.error(f"Could not save debug SVG image for {element_id} to /tmp: {save_err}")
             # --- END DEBUG ---
 
             # Paste the SVG image onto the main image using alpha compositing
@@ -156,7 +156,6 @@ def process_figure(figure_data: Dict[str, Any], image: Image.Image) -> None:
             # Fallback for shapes not in mapping (including original rect/ellipse/circle)
             logger.warning(f"SVG not found for shape '{sub_type}' (ID: {element_id}). Attempting direct draw.")
             # --- Fallback Drawing Code --- 
-            from PIL import ImageDraw # Import only if needed
             draw_fallback = ImageDraw.Draw(image)
             coords = [x, y, x + width, y + height]
             # Re-parse fill color tuple for Pillow

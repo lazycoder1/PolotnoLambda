@@ -6,6 +6,29 @@ import logging # Import logging
 
 logger = logging.getLogger(__name__) # Setup logger for helpers
 
+# --- NEW: Add basic color name mapping ---
+COLOR_NAME_MAP = {
+    "white": (255, 255, 255, 255),
+    "black": (0, 0, 0, 255),
+    "red": (255, 0, 0, 255),
+    "green": (0, 128, 0, 255), # Using standard green, not lime
+    "blue": (0, 0, 255, 255),
+    "yellow": (255, 255, 0, 255),
+    "cyan": (0, 255, 255, 255),
+    "magenta": (255, 0, 255, 255),
+    "silver": (192, 192, 192, 255),
+    "gray": (128, 128, 128, 255),
+    "grey": (128, 128, 128, 255),
+    "maroon": (128, 0, 0, 255),
+    "olive": (128, 128, 0, 255),
+    "purple": (128, 0, 128, 255),
+    "teal": (0, 128, 128, 255),
+    "navy": (0, 0, 128, 255),
+    "transparent": (0, 0, 0, 0) # Useful alias
+    # Add more names as needed
+}
+# ---------------------------------------
+
 def contains_devanagari(text: str) -> bool:
     """Check if the text contains characters in the Devanagari Unicode range."""
     # Devanagari range: U+0900 to U+097F
@@ -44,13 +67,46 @@ def validate_json_structure(json_data: Dict[str, Any]) -> bool:
     
     return True 
 
-def parse_color(color_str: str, default_color: Tuple[int, int, int, int] = (0, 0, 0, 255)) -> Tuple[int, int, int, int]:
-    """Parses a color string (hex, rgb, rgba) into an RGBA tuple."""
-    if not isinstance(color_str, str):
-        logger.warning(f"Invalid color type provided: {type(color_str)}. Using default.")
+def parse_color(color_input: Any, default_color: Optional[Tuple[int, int, int, int]] = (0, 0, 0, 255)) -> Optional[Tuple[int, int, int, int]]:
+    """Parses a color input (hex, rgb, rgba, name string, or tuple) into an RGBA tuple."""
+    
+    # --- MODIFIED: Handle direct tuple/list input --- 
+    if isinstance(color_input, (tuple, list)):
+        if len(color_input) == 4 and all(isinstance(c, int) for c in color_input):
+            # Assume valid RGBA tuple
+            r, g, b, a = color_input
+            # Clamp values just in case
+            return (
+                max(0, min(255, r)),
+                max(0, min(255, g)),
+                max(0, min(255, b)),
+                max(0, min(255, a))
+            )
+        elif len(color_input) == 3 and all(isinstance(c, int) for c in color_input):
+             # Assume valid RGB tuple, add full alpha
+            r, g, b = color_input
+            return (
+                max(0, min(255, r)),
+                max(0, min(255, g)),
+                max(0, min(255, b)),
+                255
+            )
+        else:
+             logger.warning(f"Invalid tuple/list format for color: {color_input}. Using default.")
+             return default_color
+             
+    # --- Ensure input is string for further parsing --- 
+    if not isinstance(color_input, str):
+        logger.warning(f"Invalid color type provided: {type(color_input)}. Expected string or tuple/list. Using default.")
         return default_color
 
-    color_str = color_str.strip().lower()
+    color_str = color_input.strip().lower()
+
+    # --- NEW: Try parsing Color Name --- 
+    if color_str in COLOR_NAME_MAP:
+        logger.debug(f"Parsed color name '{color_str}' -> {COLOR_NAME_MAP[color_str]}")
+        return COLOR_NAME_MAP[color_str]
+    # ---------------------------------
 
     # Try parsing HEX (#RRGGBB or #RRGGBBAA)
     if color_str.startswith('#'):

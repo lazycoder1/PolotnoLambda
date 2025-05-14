@@ -1,0 +1,414 @@
+{
+  "service": {
+    "service": "marketing-image-generation",
+    "serviceObject": {
+      "name": "marketing-image-generation"
+    },
+    "provider": {
+      "name": "aws",
+      "runtime": "python3.9",
+      "stage": "dev",
+      "region": "ap-south-1",
+      "environment": {
+        "SQS_QUEUE_URL": {
+          "Ref": "MarketingImageGenerationQueue"
+        },
+        "DLQ_URL": {
+          "Ref": "MarketingImageGenerationDLQ"
+        },
+        "DB_HOST": "dbperformancedev.postgres.database.azure.com",
+        "DB_PORT": "5432",
+        "DB_NAME": "postgres",
+        "DB_USER": "postgres",
+        "DB_PASSWORD": "$t67b@123_Dev$DB",
+        "AUTH0_DOMAIN": "auth.sparkiq.ai",
+        "AUTH0_AUDIENCE": "https://api.sparkiq.ai",
+        "S3_IMAGE_OUTPUT_BUCKET": "upwork-marketing-image-output",
+        "GOOGLE_API_KEY": "AIzaSyB-Ht9R4Wkmd1mwb9PL8AF4LufAHG2-Gd4",
+        "FONT_S3_BUCKET": "upwork-font-assets",
+        "LOG_LEVEL": "DEBUG"
+      },
+      "iamRoleStatements": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "sqs:ReceiveMessage",
+            "sqs:DeleteMessage",
+            "sqs:GetQueueAttributes"
+          ],
+          "Resource": {
+            "Fn::GetAtt": [
+              "MarketingImageGenerationQueue",
+              "Arn"
+            ]
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "sqs:SendMessage"
+          ],
+          "Resource": {
+            "Fn::GetAtt": [
+              "MarketingImageGenerationQueue",
+              "Arn"
+            ]
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "sqs:SendMessage"
+          ],
+          "Resource": {
+            "Fn::GetAtt": [
+              "MarketingImageGenerationDLQ",
+              "Arn"
+            ]
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:PutObject",
+            "s3:PutObjectAcl"
+          ],
+          "Resource": "arn:aws:s3:::upwork-marketing-image-output/*"
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:PutObjectAcl"
+          ],
+          "Resource": "arn:aws:s3:::upwork-font-assets/*"
+        }
+      ],
+      "ecr": {
+        "images": {
+          "appimage": {
+            "path": "./",
+            "platform": "linux/amd64"
+          }
+        }
+      },
+      "versionFunctions": true,
+      "compiledCloudFormationTemplate": {
+        "AWSTemplateFormatVersion": "2010-09-09",
+        "Description": "The AWS CloudFormation template for this Serverless application",
+        "Resources": {
+          "ImageGeneratorLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/marketing-image-generation-dev-imageGenerator"
+            }
+          },
+          "IamRoleLambdaExecution": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+              "AssumeRolePolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Principal": {
+                      "Service": [
+                        "lambda.amazonaws.com"
+                      ]
+                    },
+                    "Action": [
+                      "sts:AssumeRole"
+                    ]
+                  }
+                ]
+              },
+              "Policies": [
+                {
+                  "PolicyName": {
+                    "Fn::Join": [
+                      "-",
+                      [
+                        "marketing-image-generation",
+                        "dev",
+                        "lambda"
+                      ]
+                    ]
+                  },
+                  "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "logs:CreateLogStream",
+                          "logs:CreateLogGroup",
+                          "logs:TagResource"
+                        ],
+                        "Resource": [
+                          {
+                            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/marketing-image-generation-dev*:*"
+                          }
+                        ]
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "logs:PutLogEvents"
+                        ],
+                        "Resource": [
+                          {
+                            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/marketing-image-generation-dev*:*:*"
+                          }
+                        ]
+                      },
+                      {
+                        "$ref": "$[\"service\"][\"provider\"][\"iamRoleStatements\"][0]"
+                      },
+                      {
+                        "$ref": "$[\"service\"][\"provider\"][\"iamRoleStatements\"][1]"
+                      },
+                      {
+                        "$ref": "$[\"service\"][\"provider\"][\"iamRoleStatements\"][2]"
+                      },
+                      {
+                        "$ref": "$[\"service\"][\"provider\"][\"iamRoleStatements\"][3]"
+                      },
+                      {
+                        "$ref": "$[\"service\"][\"provider\"][\"iamRoleStatements\"][4]"
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "sqs:ReceiveMessage",
+                          "sqs:DeleteMessage",
+                          "sqs:GetQueueAttributes"
+                        ],
+                        "Resource": [
+                          {
+                            "Fn::GetAtt": [
+                              "MarketingImageGenerationQueue",
+                              "Arn"
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Path": "/",
+              "RoleName": {
+                "Fn::Join": [
+                  "-",
+                  [
+                    "marketing-image-generation",
+                    "dev",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    "lambdaRole"
+                  ]
+                ]
+              }
+            }
+          },
+          "ImageGeneratorLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:202fdfc8f4a97469f90ab645cfecdafb7bb967b91548da885099303104e95030"
+              },
+              "PackageType": "Image",
+              "FunctionName": "marketing-image-generation-dev-imageGenerator",
+              "MemorySize": 512,
+              "Timeout": 300,
+              "Environment": {
+                "Variables": {
+                  "SQS_QUEUE_URL": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"SQS_QUEUE_URL\"]"
+                  },
+                  "DLQ_URL": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"DLQ_URL\"]"
+                  },
+                  "DB_HOST": "dbperformancedev.postgres.database.azure.com",
+                  "DB_PORT": "5432",
+                  "DB_NAME": "postgres",
+                  "DB_USER": "postgres",
+                  "DB_PASSWORD": "$t67b@123_Dev$DB",
+                  "AUTH0_DOMAIN": "auth.sparkiq.ai",
+                  "AUTH0_AUDIENCE": "https://api.sparkiq.ai",
+                  "S3_IMAGE_OUTPUT_BUCKET": "upwork-marketing-image-output",
+                  "GOOGLE_API_KEY": "AIzaSyB-Ht9R4Wkmd1mwb9PL8AF4LufAHG2-Gd4",
+                  "FONT_S3_BUCKET": "upwork-font-assets",
+                  "LOG_LEVEL": "DEBUG"
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "ImageGeneratorLogGroup"
+            ]
+          },
+          "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "ImageGeneratorLambdaFunction"
+              },
+              "CodeSha256": "202fdfc8f4a97469f90ab645cfecdafb7bb967b91548da885099303104e95030"
+            }
+          },
+          "ImageGeneratorEventSourceMappingSQSMarketingImageGenerationQueue": {
+            "Type": "AWS::Lambda::EventSourceMapping",
+            "DependsOn": [
+              "IamRoleLambdaExecution"
+            ],
+            "Properties": {
+              "BatchSize": 5,
+              "EventSourceArn": {
+                "Fn::GetAtt": [
+                  "MarketingImageGenerationQueue",
+                  "Arn"
+                ]
+              },
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "ImageGeneratorLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Enabled": true
+            }
+          },
+          "MarketingImageGenerationQueue": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {
+              "QueueName": "MarketingImageGenerationQueue-dev",
+              "VisibilityTimeout": 360,
+              "RedrivePolicy": {
+                "deadLetterTargetArn": {
+                  "Fn::GetAtt": [
+                    "MarketingImageGenerationDLQ",
+                    "Arn"
+                  ]
+                },
+                "maxReceiveCount": 3
+              }
+            }
+          },
+          "MarketingImageGenerationDLQ": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {
+              "QueueName": "MarketingImageGenerationDLQ-dev",
+              "MessageRetentionPeriod": 1209600
+            }
+          }
+        },
+        "Outputs": {
+          "ServerlessDeploymentBucketName": {
+            "Value": "serverless-framework-deployments-ap-south-1-02ed68f0-1925",
+            "Export": {
+              "Name": "sls-marketing-image-generation-dev-ServerlessDeploymentBucketName"
+            }
+          },
+          "ImageGeneratorLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA"
+            },
+            "Export": {
+              "Name": "sls-marketing-image-generation-dev-ImageGeneratorLambdaFunctionQualifiedArn"
+            }
+          }
+        }
+      },
+      "vpc": {}
+    },
+    "plugins": [],
+    "pluginsData": {},
+    "functions": {
+      "imageGenerator": {
+        "image": {
+          "name": "appimage"
+        },
+        "memorySize": 512,
+        "timeout": 300,
+        "events": [
+          {
+            "sqs": {
+              "arn": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"IamRoleLambdaExecution\"][\"Properties\"][\"Policies\"][0][\"PolicyDocument\"][\"Statement\"][7][\"Resource\"][0]"
+              },
+              "batchSize": 5
+            }
+          }
+        ],
+        "name": "marketing-image-generation-dev-imageGenerator",
+        "package": {},
+        "memory": 512,
+        "vpc": {},
+        "versionLogicalId": "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA"
+      }
+    },
+    "resources": {
+      "Resources": {
+        "MarketingImageGenerationQueue": {
+          "Type": "AWS::SQS::Queue",
+          "Properties": {
+            "QueueName": "MarketingImageGenerationQueue-dev",
+            "VisibilityTimeout": 360,
+            "RedrivePolicy": {
+              "deadLetterTargetArn": {
+                "Fn::GetAtt": [
+                  "MarketingImageGenerationDLQ",
+                  "Arn"
+                ]
+              },
+              "maxReceiveCount": 3
+            }
+          }
+        },
+        "MarketingImageGenerationDLQ": {
+          "Type": "AWS::SQS::Queue",
+          "Properties": {
+            "QueueName": "MarketingImageGenerationDLQ-dev",
+            "MessageRetentionPeriod": 1209600
+          }
+        }
+      },
+      "Outputs": {}
+    },
+    "configValidationMode": "warn",
+    "serviceFilename": "serverless",
+    "initialServerlessConfig": {
+      "service": "marketing-image-generation",
+      "useDotenv": true,
+      "provider": {
+        "$ref": "$[\"service\"][\"provider\"]"
+      },
+      "functions": {
+        "$ref": "$[\"service\"][\"functions\"]"
+      },
+      "resources": {
+        "$ref": "$[\"service\"][\"resources\"]"
+      },
+      "plugins": {
+        "$ref": "$[\"service\"][\"plugins\"]"
+      }
+    },
+    "appId": null,
+    "orgId": null,
+    "layers": {}
+  },
+  "package": {
+    "artifactDirectoryName": "serverless/marketing-image-generation/dev/1747234066830-2025-05-14T14:47:46.830Z",
+    "artifact": ""
+  }
+}
