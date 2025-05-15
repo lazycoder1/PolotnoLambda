@@ -19,6 +19,23 @@ This document outlines the steps required to deploy the Marketing Image Generato
     ```
 6.  **Docker:** Install Docker Desktop or Docker Engine.
     -   Download: [Docker Website](https://www.docker.com/products/docker-desktop/)
+7. **S3:** Create 2 S3 buckets. 1 for fonts and another for the output images 
+    - Fonts will be stored in <font_bucket>/fonts/<font-name>.ttf 
+    - Output image bucket will need public access and bucket policy 
+    ```
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "PublicReadForProcessedImages",
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "s3:GetObject",
+                "Resource": "arn:aws:s3:::upwork-marketing-image-output/processed_images/*"
+            }
+        ]
+    }
+    ```
 
 ## Deployment Steps
 
