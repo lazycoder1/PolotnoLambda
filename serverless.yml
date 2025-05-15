@@ -95,6 +95,26 @@ functions:
     #     - subnet-xxxxxxxxxxxxxxxxx # Private subnet 1
     #     - subnet-xxxxxxxxxxxxxxxxx # Private subnet 2
 
+  outfeedStatus: # New function for checking outfeed status
+    # handler: lambda_src/outfeed_status.lambda_handler # REMOVED - Function uses ECR image
+    image: 
+      name: appimage 
+      command: # Override the default CMD from the Dockerfile
+        - lambda_src.outfeed_status.lambda_handler
+    memorySize: 256 # Can be smaller as it's mostly DB query
+    timeout: 30    # Shorter timeout should be sufficient
+    environment: # Inherits from provider, but can be overridden if needed
+      LOG_LEVEL: ${env:LOG_LEVEL, self:provider.environment.LOG_LEVEL} # Example: explicitly inherit
+    events:
+      - http:
+          path: /outfeed-status/{outfeed_id}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                outfeed_id: true # Marks outfeed_id as a required path parameter
+
 resources:
   Resources:
     MarketingImageGenerationQueue:

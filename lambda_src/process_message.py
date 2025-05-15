@@ -202,24 +202,42 @@ def handle_process_workflow(message_data, db_conn):
     outfeed_id = message_data.get('outfeed_id')
 
     if not all([access_token, user_template_id, outfeed_id]):
-        logger.error("'process' message missing required data fields.")
+        logger.error("'process' message missing required data (access_token, user_template_id, or outfeed_id).")
         raise ValueError("Incomplete data for 'process' message type.")
 
-    token_payload = validate_auth0_token(access_token)
-    user_sub = token_payload['sub']
-    
-    base_template_json, fields_mapping, products = _fetch_data_for_processing(user_sub, user_template_id, db_conn)
+    try:
+        user_sub = validate_auth0_token(access_token)
+        if not user_sub:
+            # validate_token_and_get_sub already logs and raises AuthError
+            return # Should not be reached if AuthError is raised
 
-    if not products:
-        logger.info(f"No products found for user_sub: {user_sub} during process workflow. Exiting workflow cleanly.")
-        return
+        base_template_json, fields_mapping, products = _fetch_data_for_processing(user_sub, user_template_id, db_conn)
+        
+        # If no products, _generate_product_specific_items will return empty list, 
+        # then _store_and_enqueue_generated_items will do nothing and return 0.
+        # This is fine, it means the process for the outfeed_id completed, but generated 0 items.
+        generated_items = _generate_product_specific_items(base_template_json, products, fields_mapping)
+        
+        enqueued_count = _store_and_enqueue_generated_items(generated_items, outfeed_id, user_template_id, user_sub, db_conn)
+        # _store_and_enqueue_generated_items handles its own commit or rollback.
+        # If it raises an exception, it will be caught by the generic except block below.
 
-    generated_items = _generate_product_specific_items(base_template_json, products, fields_mapping)
-    
-    if not generated_items:
-        logger.info("No product-specific items were generated. Exiting workflow cleanly.")
-        return
+        logger.info(f"'process' workflow completed for user_template_id: {user_template_id}, outfeed_id: {outfeed_id}. Enqueued {enqueued_count} items.")
+        return outfeed_id # Return the outfeed_id indicating this specific outfeed_id was processed.
 
-    enqueued_count = _store_and_enqueue_generated_items(generated_items, outfeed_id, user_template_id, user_sub, db_conn)
-
-    logger.info(f"'process' workflow completed. Enqueued {enqueued_count} items.") 
+    except AuthError as auth_err: # AuthError is already an Exception subclass
+        logger.error(f"Authentication error in 'process' workflow: {auth_err}", exc_info=True)
+        # No rollback here as AuthError happens before DB operations usually or should be idempotent
+        raise # Re-raise to be caught by main.py
+    except ValueError as val_err:
+        logger.error(f"Value error in 'process' workflow for outfeed_id {outfeed_id}: {val_err}", exc_info=True)
+        # No explicit rollback needed here if DB operations are structured well or if error is before writes
+        raise # Re-raise
+    except Exception as e:
+        logger.error(f"Generic error in 'process' workflow for outfeed_id {outfeed_id}: {e}", exc_info=True)
+        try:
+            db_conn.rollback()
+            logger.info(f"Database transaction rolled back for outfeed_id {outfeed_id} due to error.")
+        except Exception as rb_err:
+            logger.error(f"Failed to rollback DB transaction for outfeed_id {outfeed_id}: {rb_err}", exc_info=True)
+        raise # Re-raise e to be caught by main.py 

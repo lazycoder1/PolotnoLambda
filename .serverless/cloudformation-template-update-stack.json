@@ -8,6 +8,12 @@
         "LogGroupName": "/aws/lambda/marketing-image-generation-dev-imageGenerator"
       }
     },
+    "OutfeedStatusLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/marketing-image-generation-dev-outfeedStatus"
+      }
+    },
     "IamRoleLambdaExecution": {
       "Type": "AWS::IAM::Role",
       "Properties": {
@@ -161,7 +167,7 @@
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "Code": {
-          "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:42a9c0cd07a5a6aac81981c93de13648521432932591df84dd501a55fc4ee05a"
+          "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:d81fa2c91b76dd7498e49f3354e7b73626754f769fe50e04d748f3df6753d6a2"
         },
         "PackageType": "Image",
         "FunctionName": "marketing-image-generation-dev-imageGenerator",
@@ -199,14 +205,267 @@
         "ImageGeneratorLogGroup"
       ]
     },
-    "ImageGeneratorLambdaVersionghk3R1euexURljsvyNNHK2mznLEJI85qHrhKKZsnFiw": {
+    "ImageGeneratorLambdaVersionGUCLyhGiOJ2ZExrseT9DFvYBNoK1U4rbJ9uMv5E5k": {
       "Type": "AWS::Lambda::Version",
       "DeletionPolicy": "Retain",
       "Properties": {
         "FunctionName": {
           "Ref": "ImageGeneratorLambdaFunction"
         },
-        "CodeSha256": "42a9c0cd07a5a6aac81981c93de13648521432932591df84dd501a55fc4ee05a"
+        "CodeSha256": "d81fa2c91b76dd7498e49f3354e7b73626754f769fe50e04d748f3df6753d6a2"
+      }
+    },
+    "OutfeedStatusLambdaFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Code": {
+          "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:d81fa2c91b76dd7498e49f3354e7b73626754f769fe50e04d748f3df6753d6a2"
+        },
+        "ImageConfig": {
+          "Command": [
+            "lambda_src.outfeed_status.lambda_handler"
+          ]
+        },
+        "PackageType": "Image",
+        "FunctionName": "marketing-image-generation-dev-outfeedStatus",
+        "MemorySize": 256,
+        "Timeout": 30,
+        "Environment": {
+          "Variables": {
+            "SQS_QUEUE_URL": {
+              "Ref": "MarketingImageGenerationQueue"
+            },
+            "DLQ_URL": {
+              "Ref": "MarketingImageGenerationDLQ"
+            },
+            "DB_HOST": "dbperformancedev.postgres.database.azure.com",
+            "DB_PORT": "5432",
+            "DB_NAME": "postgres",
+            "DB_USER": "postgres",
+            "DB_PASSWORD": "$t67b@123_Dev$DB",
+            "AUTH0_DOMAIN": "auth.sparkiq.ai",
+            "AUTH0_AUDIENCE": "https://api.sparkiq.ai",
+            "S3_IMAGE_OUTPUT_BUCKET": "upwork-marketing-image-output",
+            "GOOGLE_API_KEY": "AIzaSyB-Ht9R4Wkmd1mwb9PL8AF4LufAHG2-Gd4",
+            "FONT_S3_BUCKET": "upwork-font-assets",
+            "LOG_LEVEL": "DEBUG"
+          }
+        },
+        "Role": {
+          "Fn::GetAtt": [
+            "IamRoleLambdaExecution",
+            "Arn"
+          ]
+        }
+      },
+      "DependsOn": [
+        "OutfeedStatusLogGroup"
+      ]
+    },
+    "OutfeedStatusLambdaVersiondjOcgoiq1nbVK4MgBbQvtUPKUc2w31j1p3i4Ssvtgo": {
+      "Type": "AWS::Lambda::Version",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "OutfeedStatusLambdaFunction"
+        },
+        "CodeSha256": "d81fa2c91b76dd7498e49f3354e7b73626754f769fe50e04d748f3df6753d6a2"
+      }
+    },
+    "ApiGatewayRestApi": {
+      "Type": "AWS::ApiGateway::RestApi",
+      "Properties": {
+        "Name": "dev-marketing-image-generation",
+        "EndpointConfiguration": {
+          "Types": [
+            "EDGE"
+          ]
+        },
+        "Policy": ""
+      }
+    },
+    "ApiGatewayResourceOutfeedDashstatus": {
+      "Type": "AWS::ApiGateway::Resource",
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "ApiGatewayRestApi",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "outfeed-status",
+        "RestApiId": {
+          "Ref": "ApiGatewayRestApi"
+        }
+      }
+    },
+    "ApiGatewayResourceOutfeedDashstatusOutfeedidVar": {
+      "Type": "AWS::ApiGateway::Resource",
+      "Properties": {
+        "ParentId": {
+          "Ref": "ApiGatewayResourceOutfeedDashstatus"
+        },
+        "PathPart": "{outfeed_id}",
+        "RestApiId": {
+          "Ref": "ApiGatewayRestApi"
+        }
+      }
+    },
+    "ApiGatewayMethodOutfeedDashstatusOutfeedidVarOptions": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "OPTIONS",
+        "MethodResponses": [
+          {
+            "StatusCode": "200",
+            "ResponseParameters": {
+              "method.response.header.Access-Control-Allow-Origin": true,
+              "method.response.header.Access-Control-Allow-Headers": true,
+              "method.response.header.Access-Control-Allow-Methods": true
+            },
+            "ResponseModels": {}
+          }
+        ],
+        "RequestParameters": {},
+        "Integration": {
+          "Type": "MOCK",
+          "RequestTemplates": {
+            "application/json": "{statusCode:200}"
+          },
+          "ContentHandling": "CONVERT_TO_TEXT",
+          "IntegrationResponses": [
+            {
+              "StatusCode": "200",
+              "ResponseParameters": {
+                "method.response.header.Access-Control-Allow-Origin": "'*'",
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent,X-Amzn-Trace-Id'",
+                "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,GET'"
+              },
+              "ResponseTemplates": {
+                "application/json": ""
+              }
+            }
+          ]
+        },
+        "ResourceId": {
+          "Ref": "ApiGatewayResourceOutfeedDashstatusOutfeedidVar"
+        },
+        "RestApiId": {
+          "Ref": "ApiGatewayRestApi"
+        }
+      }
+    },
+    "ApiGatewayMethodOutfeedDashstatusOutfeedidVarGet": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "HttpMethod": "GET",
+        "RequestParameters": {
+          "method.request.path.outfeed_id": true
+        },
+        "ResourceId": {
+          "Ref": "ApiGatewayResourceOutfeedDashstatusOutfeedidVar"
+        },
+        "RestApiId": {
+          "Ref": "ApiGatewayRestApi"
+        },
+        "ApiKeyRequired": false,
+        "AuthorizationType": "NONE",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "OutfeedStatusLambdaFunction",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          }
+        },
+        "MethodResponses": [],
+        "RequestValidatorId": {
+          "Ref": "ApiGatewayMarketingimagegenerationRequestValidator"
+        }
+      },
+      "DependsOn": [
+        "OutfeedStatusLambdaPermissionApiGateway"
+      ]
+    },
+    "ApiGatewayMarketingimagegenerationRequestValidator": {
+      "Type": "AWS::ApiGateway::RequestValidator",
+      "Properties": {
+        "RestApiId": {
+          "Ref": "ApiGatewayRestApi"
+        },
+        "ValidateRequestBody": true,
+        "ValidateRequestParameters": true,
+        "Name": "marketing-image-generation-dev | Validate request body and querystring parameters"
+      }
+    },
+    "ApiGatewayDeployment1747320418617": {
+      "Type": "AWS::ApiGateway::Deployment",
+      "Properties": {
+        "RestApiId": {
+          "Ref": "ApiGatewayRestApi"
+        },
+        "StageName": "dev"
+      },
+      "DependsOn": [
+        "ApiGatewayMethodOutfeedDashstatusOutfeedidVarOptions",
+        "ApiGatewayMethodOutfeedDashstatusOutfeedidVarGet"
+      ]
+    },
+    "OutfeedStatusLambdaPermissionApiGateway": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "OutfeedStatusLambdaFunction",
+            "Arn"
+          ]
+        },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "ApiGatewayRestApi"
+              },
+              "/*/*"
+            ]
+          ]
+        }
       }
     },
     "ImageGeneratorEventSourceMappingSQSMarketingImageGenerationQueue": {
@@ -265,10 +524,45 @@
     "ImageGeneratorLambdaFunctionQualifiedArn": {
       "Description": "Current Lambda function version",
       "Value": {
-        "Ref": "ImageGeneratorLambdaVersionghk3R1euexURljsvyNNHK2mznLEJI85qHrhKKZsnFiw"
+        "Ref": "ImageGeneratorLambdaVersionGUCLyhGiOJ2ZExrseT9DFvYBNoK1U4rbJ9uMv5E5k"
       },
       "Export": {
         "Name": "sls-marketing-image-generation-dev-ImageGeneratorLambdaFunctionQualifiedArn"
+      }
+    },
+    "OutfeedStatusLambdaFunctionQualifiedArn": {
+      "Description": "Current Lambda function version",
+      "Value": {
+        "Ref": "OutfeedStatusLambdaVersiondjOcgoiq1nbVK4MgBbQvtUPKUc2w31j1p3i4Ssvtgo"
+      },
+      "Export": {
+        "Name": "sls-marketing-image-generation-dev-OutfeedStatusLambdaFunctionQualifiedArn"
+      }
+    },
+    "ServiceEndpoint": {
+      "Description": "URL of the service endpoint",
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Ref": "ApiGatewayRestApi"
+            },
+            ".execute-api.",
+            {
+              "Ref": "AWS::Region"
+            },
+            ".",
+            {
+              "Ref": "AWS::URLSuffix"
+            },
+            "/dev"
+          ]
+        ]
+      },
+      "Export": {
+        "Name": "sls-marketing-image-generation-dev-ServiceEndpoint"
       }
     }
   }
