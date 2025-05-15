@@ -39,7 +39,6 @@ _image_proc_instance_singleton = None # Internal, use getter
 def _load_db_credentials_from_env():
     """Loads DB credentials directly from environment variables."""
     global db_connection_params
-    print("[DEBUG_PRINT] _load_db_credentials_from_env: Entered function.") # DEBUG PRINT
     logger.info("Attempting to load DB credentials from environment variables...")
     
     # Log the values of the environment variables being read
@@ -59,7 +58,6 @@ def _load_db_credentials_from_env():
     missing_vars = [key for key, value in required_db_vars.items() if not value]
     if missing_vars:
         err_msg = f"Missing required database environment variables: { ', '.join(missing_vars)}"
-        print(f"[DEBUG_PRINT] _load_db_credentials_from_env: Error - {err_msg}") # DEBUG PRINT
         logger.error(err_msg)
         # Ensure db_connection_params remains None or is cleared if partial load was attempted
         db_connection_params = None 
@@ -73,46 +71,37 @@ def _load_db_credentials_from_env():
             "user": DB_USER,
             "password": DB_PASSWORD
         }
-        print(f"[DEBUG_PRINT] _load_db_credentials_from_env: Success. Params: {db_connection_params}") # DEBUG PRINT
-        logger.info(f"Database credentials successfully loaded and parsed. db_connection_params: {db_connection_params}")
+        safe_params_to_log = {k: (v if k != 'password' else '********') for k, v in db_connection_params.items()}
+        logger.info(f"Database credentials successfully loaded and parsed. db_connection_params (password masked): {safe_params_to_log}")
     except ValueError as e: 
         err_msg = f"Invalid DB_PORT value: '{DB_PORT}'. Must be an integer. Error: {e}"
-        print(f"[DEBUG_PRINT] _load_db_credentials_from_env: ValueError - {err_msg}") # DEBUG PRINT
         logger.error(err_msg, exc_info=True)
         db_connection_params = None # Clear on error
         raise ValueError(f"Invalid DB_PORT: {e}")
     except Exception as e: 
-        print(f"[DEBUG_PRINT] _load_db_credentials_from_env: Unexpected Exception - {str(e)}") # DEBUG PRINT
         logger.error(f"Unexpected error loading DB credentials from environment: {e}", exc_info=True)
         db_connection_params = None # Clear on error
         raise
-    print("[DEBUG_PRINT] _load_db_credentials_from_env: Exiting function.") # DEBUG PRINT
 
 def initialize_config():
     """Initializes configurations that can be done once per cold start, like DB creds."""
     global db_connection_params
-    print("[DEBUG_PRINT] initialize_config: Entered function.") # DEBUG PRINT
     logger.info("Initializing Lambda configuration...")
     if not db_connection_params:
-        print("[DEBUG_PRINT] initialize_config: db_connection_params is None. Calling _load_db_credentials_from_env().") # DEBUG PRINT
         logger.info("db_connection_params not yet set. Calling _load_db_credentials_from_env().")
         try:
             _load_db_credentials_from_env()
-            print(f"[DEBUG_PRINT] initialize_config: _load_db_credentials_from_env() returned. Params: {db_connection_params}") # DEBUG PRINT
-            logger.info(f"_load_db_credentials_from_env() completed. db_connection_params is now: {db_connection_params}")
+            safe_params_to_log = {k: (v if k != 'password' else '********') for k, v in (db_connection_params or {}).items()}
+            logger.info(f"_load_db_credentials_from_env() completed. db_connection_params (password masked): {safe_params_to_log}")
         except ValueError as ve:
-            print(f"[DEBUG_PRINT] initialize_config: ValueError from _load_db_credentials_from_env: {str(ve)}") # DEBUG PRINT
             logger.error(f"ValueError during _load_db_credentials_from_env: {ve}. db_connection_params remains None.")
             # db_connection_params will be None due to error handling in _load_db_credentials_from_env
             raise # Re-raise to be caught by lambda_handler
         except Exception as ex:
-            print(f"[DEBUG_PRINT] initialize_config: Exception from _load_db_credentials_from_env: {str(ex)}") # DEBUG PRINT
             logger.error(f"Unexpected exception during _load_db_credentials_from_env: {ex}. db_connection_params remains None.", exc_info=True)
             raise # Re-raise to be caught by lambda_handler
     else:
-        print("[DEBUG_PRINT] initialize_config: db_connection_params was already set.") # DEBUG PRINT
         logger.info("db_connection_params already set. Skipping load.")
-    print("[DEBUG_PRINT] initialize_config: Exiting function.") # DEBUG PRINT
     logger.info("Lambda configuration initialization finished.")
 
 def get_image_processor():

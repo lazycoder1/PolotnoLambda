@@ -45,16 +45,7 @@ This document outlines the steps required to deploy the Marketing Image Generato
 
     -   _(Alternatively, set `INPUT_BUCKET` and `OUTPUT_BUCKET` as environment variables in your terminal before deploying)._
 
-3.  **Build the Docker Image:**
-
-    -   Ensure Docker is running.
-    -   From the project root directory, run:
-
-    ```bash
-    docker build -t marketing-image-gen .
-    ```
-
-4.  **Authenticate Docker with AWS ECR:**
+3.  **Authenticate Docker with AWS ECR:**
 
     -   Replace `<your-region>` and `<your-aws-account-id>` with your details.
 
@@ -62,33 +53,33 @@ This document outlines the steps required to deploy the Marketing Image Generato
     aws ecr get-login-password --region <your-region> | docker login --username AWS --password-stdin <your-aws-account-id>.dkr.ecr.<your-region>.amazonaws.com
     ```
 
-5.  **Tag the Docker Image for ECR:**
+5.  **Build, Push Docker Image to ECR, and Deploy with Serverless Framework:**
 
-    -   The Serverless Framework will create an ECR repository named `serverless-<service>-<stage>` (e.g., `serverless-marketing-image-gen-dev`).
-    -   Replace `<your-aws-account-id>` and `<your-region>`.
+    The following command combines building the Docker image, pushing it to ECR, and then deploying the Serverless stack. 
+    Ensure you replace placeholders like `<your-aws-account-id>`, `<your-region>`, and potentially the ECR repository name (`serverless-marketing-image-gen-dev`) and image tag (`appimage`) if they differ from your setup. The repository name is typically derived from your service name (`marketing-image-gen`) and stage (`dev`) in `serverless.yml`.
 
+    Example command (replace with your specific values):
     ```bash
-    docker tag marketing-image-gen:latest <your-aws-account-id>.dkr.ecr.<your-region>.amazonaws.com/serverless-marketing-image-gen-dev:appimage
+    docker build --no-cache --platform linux/amd64 -t <your-aws-account-id>.dkr.ecr.<your-region>.amazonaws.com/<your-ecr-repo-name>:<image-tag> . && docker push <your-aws-account-id>.dkr.ecr.<your-region>.amazonaws.com/<your-ecr-repo-name>:<image-tag> && sls deploy
     ```
 
-    -   _(Note: The `:appimage` tag matches the logical image name in `serverless.yml`)_
-
-6.  **Push the Docker Image to ECR:**
-
-    -   Replace `<your-aws-account-id>` and `<your-region>`.
-
+    Based on your provided command, this would look like (ensure these values match your environment):
     ```bash
-    docker push <your-aws-account-id>.dkr.ecr.<your-region>.amazonaws.com/serverless-marketing-image-gen-dev:appimage
+    docker build --no-cache --platform linux/amd64 -t 481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-gen-dev:appimage . && docker push 481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-gen-dev:appimage && sls deploy
     ```
 
-7.  **Deploy using Serverless Framework:**
-    -   Ensure your AWS CLI is configured correctly (`aws configure`).
-    -   From the project root directory, run:
-    ```bash
-    serverless deploy
-    ```
-    -   _(Shorthand: `sls deploy`)_
-    -   The command will provision the AWS resources defined in `serverless.yml` (Lambda function, IAM role, etc.) using the pushed ECR image. Monitor the output for success or errors.
+    **Explanation of the command components:**
+    *   `docker build --no-cache --platform linux/amd64 -t <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/<REPO_NAME>:<TAG> .`:
+        *   Builds the Docker image from the `Dockerfile` in the current directory (`.`).
+        *   `--no-cache`: Disables caching for the build.
+        *   `--platform linux/amd64`: Specifies the platform, crucial for Lambda compatibility.
+        *   `-t ...`: Tags the image with the full ECR repository URI and tag. The `<REPO_NAME>` should match what Serverless Framework expects (e.g., `serverless-<service-name>-<stage>`) and `<TAG>` should match the logical image name in `serverless.yml` (e.g., `appimage`).
+    *   `&& docker push <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/<REPO_NAME>:<TAG>`:
+        *   Pushes the tagged image to your AWS ECR repository.
+    *   `&& sls deploy`:
+        *   Deploys your service using the Serverless Framework. `serverless.yml` should be configured to use this ECR image.
+
+    The `sls deploy` command will provision the AWS resources defined in `serverless.yml` (Lambda function, IAM role, etc.) using the pushed ECR image. Monitor the output for success or errors.
 
 ## Post-Deployment
 

@@ -24,13 +24,11 @@ def _route_message_type(message_type, message_data, db_conn):
 
 def _process_sqs_record(record):
     """Processes a single SQS record."""
-    print("[DEBUG_PRINT] _process_sqs_record: Entered function.") # DEBUG PRINT
     logger.info(f"Processing SQS record with MessageId: {record.get('messageId')}")
     db_conn = None
     try:
         message_body_str = record.get('body')
         if not message_body_str:
-            print("[DEBUG_PRINT] _process_sqs_record: SQS record missing body.") # DEBUG PRINT
             logger.warning("SQS record missing 'body'. Skipping.")
             return # Successfully "processed" this malformed record by skipping
         
@@ -50,7 +48,6 @@ def _process_sqs_record(record):
                 # Or, more robustly, ensure it's a dict or raise:
                 raise ValueError(f"message_data could not be parsed into a dictionary: {json_err}")
 
-        print(f"[DEBUG_PRINT] _process_sqs_record: Message type: {message_type}") # DEBUG PRINT
         logger.info(f"SQS Message Type: {message_type}")
 
         db_conn = get_db_connection() # Use imported function from db_utils
@@ -59,7 +56,6 @@ def _process_sqs_record(record):
         # Commit/rollback is handled within the workflow functions in their respective modules.
 
     except Exception as e:
-        print(f"[DEBUG_PRINT] _process_sqs_record: Exception: {str(e)}") # DEBUG PRINT
         # Errors from _route_message_type (and underlying workflows) will be caught here.
         logger.error(f"Failed to process SQS message ID {record.get('messageId', 'N/A')}: {e}", exc_info=True)
         if db_conn:
@@ -73,19 +69,14 @@ def _process_sqs_record(record):
         if db_conn:
             db_conn.close()
             logger.info("Database connection closed for SQS record processing cycle.")
-        print("[DEBUG_PRINT] _process_sqs_record: Exiting function.") # DEBUG PRINT
 
 # --- Main Lambda Handler ---
 def lambda_handler(event, context):
-    print("[DEBUG_PRINT] lambda_handler: Entered function.") # DEBUG PRINT
     logger.info(f"Received SQS event with {len(event.get('Records', []))} records.")
     
     try:
-        print("[DEBUG_PRINT] lambda_handler: Calling initialize_config().") # DEBUG PRINT
         initialize_config() # Initialize configuration (e.g., DB creds) from lambda_src.config
-        print("[DEBUG_PRINT] lambda_handler: initialize_config() returned.") # DEBUG PRINT
     except Exception as e:
-        print(f"[DEBUG_PRINT] lambda_handler: Exception during initialize_config(): {str(e)}") # DEBUG PRINT
         logger.critical(f"Lambda initialization failed (e.g., DB credentials): {e}. Cannot process event.", exc_info=True)
         # This is a fatal error for this invocation. 
         # SQS messages (if any in the event) will be returned to the queue and retried.
@@ -93,7 +84,6 @@ def lambda_handler(event, context):
 
     for record in event.get('Records', []):
         try:
-            print(f"[DEBUG_PRINT] lambda_handler: Processing record: {record.get('messageId')}") # DEBUG PRINT
             _process_sqs_record(record)
             # If _process_sqs_record completes without raising an exception,
             # Lambda considers this message successfully processed from its perspective.

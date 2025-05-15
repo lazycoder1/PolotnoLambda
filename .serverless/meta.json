@@ -259,7 +259,7 @@
               "Type": "AWS::Lambda::Function",
               "Properties": {
                 "Code": {
-                  "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:202fdfc8f4a97469f90ab645cfecdafb7bb967b91548da885099303104e95030"
+                  "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:42a9c0cd07a5a6aac81981c93de13648521432932591df84dd501a55fc4ee05a"
                 },
                 "PackageType": "Image",
                 "FunctionName": "marketing-image-generation-dev-imageGenerator",
@@ -297,14 +297,14 @@
                 "ImageGeneratorLogGroup"
               ]
             },
-            "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA": {
+            "ImageGeneratorLambdaVersionghk3R1euexURljsvyNNHK2mznLEJI85qHrhKKZsnFiw": {
               "Type": "AWS::Lambda::Version",
               "DeletionPolicy": "Retain",
               "Properties": {
                 "FunctionName": {
                   "Ref": "ImageGeneratorLambdaFunction"
                 },
-                "CodeSha256": "202fdfc8f4a97469f90ab645cfecdafb7bb967b91548da885099303104e95030"
+                "CodeSha256": "42a9c0cd07a5a6aac81981c93de13648521432932591df84dd501a55fc4ee05a"
               }
             },
             "ImageGeneratorEventSourceMappingSQSMarketingImageGenerationQueue": {
@@ -363,7 +363,7 @@
             "ImageGeneratorLambdaFunctionQualifiedArn": {
               "Description": "Current Lambda function version",
               "Value": {
-                "Ref": "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA"
+                "Ref": "ImageGeneratorLambdaVersionghk3R1euexURljsvyNNHK2mznLEJI85qHrhKKZsnFiw"
               },
               "Export": {
                 "Name": "sls-marketing-image-generation-dev-ImageGeneratorLambdaFunctionQualifiedArn"
@@ -397,7 +397,7 @@
           "package": {},
           "memory": 512,
           "vpc": {},
-          "versionLogicalId": "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA"
+          "versionLogicalId": "ImageGeneratorLambdaVersionghk3R1euexURljsvyNNHK2mznLEJI85qHrhKKZsnFiw"
         }
       },
       "resources": {
@@ -683,7 +683,7 @@
             "Type": "AWS::Lambda::Function",
             "Properties": {
               "Code": {
-                "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:202fdfc8f4a97469f90ab645cfecdafb7bb967b91548da885099303104e95030"
+                "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:42a9c0cd07a5a6aac81981c93de13648521432932591df84dd501a55fc4ee05a"
               },
               "PackageType": "Image",
               "FunctionName": "marketing-image-generation-dev-imageGenerator",
@@ -721,14 +721,14 @@
               "ImageGeneratorLogGroup"
             ]
           },
-          "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA": {
+          "ImageGeneratorLambdaVersionghk3R1euexURljsvyNNHK2mznLEJI85qHrhKKZsnFiw": {
             "Type": "AWS::Lambda::Version",
             "DeletionPolicy": "Retain",
             "Properties": {
               "FunctionName": {
                 "Ref": "ImageGeneratorLambdaFunction"
               },
-              "CodeSha256": "202fdfc8f4a97469f90ab645cfecdafb7bb967b91548da885099303104e95030"
+              "CodeSha256": "42a9c0cd07a5a6aac81981c93de13648521432932591df84dd501a55fc4ee05a"
             }
           },
           "ImageGeneratorEventSourceMappingSQSMarketingImageGenerationQueue": {
@@ -787,7 +787,7 @@
           "ImageGeneratorLambdaFunctionQualifiedArn": {
             "Description": "Current Lambda function version",
             "Value": {
-              "Ref": "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA"
+              "Ref": "ImageGeneratorLambdaVersionghk3R1euexURljsvyNNHK2mznLEJI85qHrhKKZsnFiw"
             },
             "Export": {
               "Name": "sls-marketing-image-generation-dev-ImageGeneratorLambdaFunctionQualifiedArn"
@@ -819,12 +819,12 @@
     "serviceProviderAwsCfStackName": "marketing-image-generation-dev",
     "serviceProviderAwsCfStackId": "arn:aws:cloudformation:ap-south-1:481665127174:stack/marketing-image-generation-dev/3b1ccce0-309c-11f0-95a1-06584ee0e51f",
     "serviceProviderAwsCfStackCreated": "2025-05-14T08:20:01.507Z",
-    "serviceProviderAwsCfStackUpdated": "2025-05-14T14:41:27.387Z",
+    "serviceProviderAwsCfStackUpdated": "2025-05-15T10:24:01.328Z",
     "serviceProviderAwsCfStackStatus": "UPDATE_COMPLETE",
     "serviceProviderAwsCfStackOutputs": [
       {
         "OutputKey": "ImageGeneratorLambdaFunctionQualifiedArn",
-        "OutputValue": "arn:aws:lambda:ap-south-1:481665127174:function:marketing-image-generation-dev-imageGenerator:21",
+        "OutputValue": "arn:aws:lambda:ap-south-1:481665127174:function:marketing-image-generation-dev-imageGenerator:23",
         "Description": "Current Lambda function version",
         "ExportName": "sls-marketing-image-generation-dev-ImageGeneratorLambdaFunctionQualifiedArn"
       },
@@ -997,7 +997,7 @@
           "Type": "AWS::Lambda::Function",
           "Properties": {
             "Code": {
-              "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:202fdfc8f4a97469f90ab645cfecdafb7bb967b91548da885099303104e95030"
+              "ImageUri": "481665127174.dkr.ecr.ap-south-1.amazonaws.com/serverless-marketing-image-generation-dev@sha256:42a9c0cd07a5a6aac81981c93de13648521432932591df84dd501a55fc4ee05a"
             },
             "PackageType": "Image",
             "FunctionName": "marketing-image-generation-dev-imageGenerator",
@@ -1035,14 +1035,14 @@
             "ImageGeneratorLogGroup"
           ]
         },
-        "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA": {
+        "ImageGeneratorLambdaVersionghk3R1euexURljsvyNNHK2mznLEJI85qHrhKKZsnFiw": {
           "Type": "AWS::Lambda::Version",
           "DeletionPolicy": "Retain",
           "Properties": {
             "FunctionName": {
               "Ref": "ImageGeneratorLambdaFunction"
             },
-            "CodeSha256": "202fdfc8f4a97469f90ab645cfecdafb7bb967b91548da885099303104e95030"
+            "CodeSha256": "42a9c0cd07a5a6aac81981c93de13648521432932591df84dd501a55fc4ee05a"
           }
         },
         "ImageGeneratorEventSourceMappingSQSMarketingImageGenerationQueue": {
@@ -1101,7 +1101,7 @@
         "ImageGeneratorLambdaFunctionQualifiedArn": {
           "Description": "Current Lambda function version",
           "Value": {
-            "Ref": "ImageGeneratorLambdaVersion8g2PAjb1alCEAKnEoiZGTYBUpPncrmzg0sFB2q0hdA"
+            "Ref": "ImageGeneratorLambdaVersionghk3R1euexURljsvyNNHK2mznLEJI85qHrhKKZsnFiw"
           },
           "Export": {
             "Name": "sls-marketing-image-generation-dev-ImageGeneratorLambdaFunctionQualifiedArn"

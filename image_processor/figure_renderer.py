@@ -34,10 +34,10 @@ except Exception as e:
     logger.error(f"Error loading shape mapping: {e}")
 
 
-def process_figure(figure_data: Dict[str, Any], image: Image.Image) -> None:
-    """Process and draw figure elements using SVG rendering via cairosvg""" # Docstring updated
+def process_figure(figure_data: Dict[str, Any], image: Image.Image) -> bool:
+    """Process and draw figure elements. Returns True on success, False on handled failure."""
     element_id = figure_data.get('id', 'N/A')
-    logger.debug(f"Processing figure ID: {element_id} using SVG rendering (cairosvg)") # Log updated
+    logger.debug(f"Processing figure ID: {element_id} using SVG rendering (cairosvg)")
     
     try:
         # Validate input
@@ -56,7 +56,7 @@ def process_figure(figure_data: Dict[str, Any], image: Image.Image) -> None:
         # Ensure width and height are positive
         if width <= 0 or height <= 0:
             logger.warning(f"Figure ID {element_id} has non-positive dimensions ({width}x{height}). Skipping.")
-            return
+            return False # Indicate failure
         
         # Get appearance properties
         fill_color_str = figure_data.get('fill', 'rgba(0,0,0,1)')
@@ -123,7 +123,7 @@ def process_figure(figure_data: Dict[str, Any], image: Image.Image) -> None:
                  draw_fallback = ImageDraw.Draw(image)
                  draw_fallback.rectangle([x, y, x + width, y + height], outline="red", width=2)
                  logger.info(f"Drew fallback rectangle for failed SVG {element_id}")
-                 return
+                 return False # Indicate failure
 
             # Load PNG bytes into a PIL Image
             svg_image = Image.open(io.BytesIO(png_bytes))
@@ -177,9 +177,13 @@ def process_figure(figure_data: Dict[str, Any], image: Image.Image) -> None:
                 draw_fallback.ellipse(coords, fill=fill_tuple_pillow, outline=stroke_tuple_pillow, width=stroke_width)
             else:
                 logger.warning(f"Unsupported figure subType '{sub_type}' for fallback drawing (ID: {element_id}). Skipping.")
+                return False # Indicate failure
             # --- End Fallback --- 
+        return True # Indicate success if we reached here
                 
     except ValueError as ve:
          logger.error(f"Data validation error for figure ID {element_id}: {ve}")
+         raise # Re-raise to be caught by processor.py and added to element_processing_errors
     except Exception as e:
-        logger.error(f"Error processing figure ID {element_id}: {e}", exc_info=True) 
+        logger.error(f"Error processing figure ID {element_id}: {e}", exc_info=True)
+        return False # Indicate generic failure for other unexpected errors caught here 

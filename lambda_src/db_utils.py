@@ -8,7 +8,7 @@ logger = get_logger(__name__) # Specific logger for db_utils
 
 def get_db_connection():
     """Establishes and returns a new database connection using pre-fetched params."""
-    print(f"[DEBUG_PRINT_V2] get_db_connection: lambda_config.db_connection_params are: {lambda_config.db_connection_params}") # DEBUG PRINT MODIFIED
+    # print(f"[DEBUG_PRINT_V2] get_db_connection: lambda_config.db_connection_params are: {lambda_config.db_connection_params}") # DEBUG PRINT MODIFIED - Removed
     if not lambda_config.db_connection_params: # Access through the imported module
         logger.error("DB connection parameters not loaded. Call initialize_config from config module first or ensure it ran.")
         raise ConnectionError("Database parameters not initialized.")

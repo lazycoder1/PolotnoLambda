@@ -84,7 +84,7 @@ The Lambda function handles two types of messages from the same SQS queue:
 3.  **Update Status to `GENERATING`:**
     -   If the record is suitable for generation, its `status` in `generated_feeds` is updated to **`GENERATING`** (this is an atomic update before image processing begins).
 4.  **Image Generation:**
-    -   The `image_processor.ImageProcessor().combine_images(generated_json)` method is called to render the image. (This sub-system handles font management, element rendering, etc., potentially fetching fonts from Google Fonts and caching them to S3 as per its own configuration).
+    -   The `image_processor.ImageProcessor().combine_images(generated_json)` method is called to render the image. (This sub-system handles font management, element rendering (including text with backgrounds, images, figures), etc., potentially fetching fonts from Google Fonts and caching them to S3 as per its own configuration).
 5.  **Handle Generation Outcome:**
     -   **On Success:**
         -   The generated image (PNG format) is uploaded to the configured S3 output bucket.
@@ -126,7 +126,7 @@ The Lambda relies on a PostgreSQL database (`facebook_test` schema) for storing 
 The actual rendering of images from JSON is delegated to the `image_processor` module. This module is responsible for:
 
 -   Parsing the `generated_json`.
--   Handling different element types (text, images, figures).
+-   Handling different element types (text with optional backgrounds featuring configurable color, padding, and corner radius; images; figures).
 -   Managing fonts: This may include fetching fonts from Google Fonts, caching them locally (`/tmp`) and to an S3 bucket (`FONT_S3_CACHE_BUCKET`), and using fallback fonts, as detailed in its own documentation or previous versions of this overview.
 -   Compositing elements onto a canvas and returning a Pillow image object.
 

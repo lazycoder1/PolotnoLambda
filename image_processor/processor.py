@@ -122,8 +122,11 @@ class ImageProcessor:
                              
                         logger.debug(f"Processing element {element_id} of type {element_type}")
                         if element_type == 'figure':
-                            # Assuming process_figure might raise an exception on failure or we adapt it
-                            process_figure(child, canvas) # If process_figure can fail and not raise, it needs to signal error
+                            figure_processed_successfully = process_figure(child, canvas)
+                            if not figure_processed_successfully:
+                                err_msg = f"{error_prefix}: Figure element could not be processed or drawn correctly."
+                                logger.warning(err_msg)
+                                element_processing_errors.append(err_msg)
                         elif element_type == 'image':
                             processed_image_data = process_image(child) # process_image now returns None on failure
                             if processed_image_data:

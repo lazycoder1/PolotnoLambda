@@ -33,7 +33,7 @@ The service is implemented as an AWS Lambda function, triggered by events (typic
     2.  **JSON Interpretation:** Parses the input JSON data to understand the layers, text elements (content, font family, variant, size, color), figures (shapes, colors), and other image properties.
     3.  **Element Rendering:**
         -   For text elements, it requests the required font from the `FontManager`.
-        -   Uses the Pillow (PIL) library to draw text, shapes, and other graphical elements onto image layers.
+        -   Uses the Pillow (PIL) library to draw text (including text with colored, rounded-corner backgrounds, if specified), shapes, and other graphical elements onto image layers.
     4.  **Image Composition:** Composites all rendered layers into a single final image.
     5.  **Return Image:** Returns the final PIL `Image` object to the Lambda handler.
 
@@ -60,6 +60,7 @@ The service is implemented as an AWS Lambda function, triggered by events (typic
 ## 4. Key Features
 
 -   **JSON-Driven Composition:** Images are defined entirely by a structured JSON input.
+    -   **Text Backgrounds:** Supports rendering of configurable backgrounds behind text elements, including color, padding, and corner radius.
 -   **Dynamic Font Handling:**
     -   Supports fonts from Google Fonts API.
     -   Supports fonts pre-loaded into an S3 bucket.
