@@ -2,6 +2,7 @@ import json
 import copy # For deep copying template_json
 from datetime import datetime, timezone # For timestamps
 import uuid # Added for UUID generation
+from auth0.exceptions import Auth0Error # Added import
 
 from .config import SQS_QUEUE_URL, sqs_client # For sending 'generate' messages
 from .db_utils import execute_query
@@ -122,14 +123,13 @@ def _store_and_enqueue_generated_items(items_to_store, outfeed_id, user_template
                 logger.error(f"Item is missing product_id. Cannot generate deterministic UUID. Item data: {item.get('json_data', {}).get('name', 'N/A')}")
                 continue
 
-            # Construct the name for UUIDv5 generation
-            # Ensure all parts are strings and handle potential None values for product_id
+            # Construct the name for UUIDv5 generation (reverted to include product_id and user_sub)
             name_for_uuid = f"{user_sub}-{user_template_id}-{outfeed_id}-{str(product_id)}"
             
             # Generate UUIDv5
             deterministic_feed_id = str(uuid.uuid5(NAMESPACE_UUID, name_for_uuid))
             
-            logger.info(f"Generated deterministic UUID {deterministic_feed_id} for product {product_id}")
+            logger.info(f"Generated deterministic UUID {deterministic_feed_id} for product {product_id}") # Reverted log
 
             # UPSERT: Insert or Update if conflict on 'id'
             # Ensure 'id' column is the primary key or has a unique constraint in 'generated_feeds'
@@ -173,19 +173,24 @@ def _store_and_enqueue_generated_items(items_to_store, outfeed_id, user_template
             if generated_feed_row and generated_feed_row['id']:
                 generated_feed_ids_to_enqueue.append(generated_feed_row['id'])
             else:
+                # Reverted log to original context
                 logger.error(f"Failed to UPSERT generated_feed for product {product_id} (UUID: {deterministic_feed_id}) or retrieve ID. Skipping SQS message.")
         
+        # Removed de-duplication of generated_feed_ids_to_enqueue
+
         if generated_feed_ids_to_enqueue:
             db_conn.commit()
+            # Reverted log for commit
             logger.info(f"Committed {len(generated_feed_ids_to_enqueue)} new rows to generated_feeds.")
 
             for feed_id in generated_feed_ids_to_enqueue:
                 sqs_message_body = {"type": "generate", "data": {"generated_feed_id": feed_id}}
                 sqs_client.send_message(QueueUrl=SQS_QUEUE_URL, MessageBody=json.dumps(sqs_message_body))
                 logger.info(f"Sent 'generate' message to SQS for generated_feed_id: {feed_id}")
-            return len(generated_feed_ids_to_enqueue)
+            return len(generated_feed_ids_to_enqueue) # Return count of all enqueued IDs
         else:
             logger.info("No feed IDs generated from items, nothing to commit or enqueue.")
+            # Reverted rollback logic to original simple rollback
             db_conn.rollback() # Should not happen if items_to_store had content and inserts were attempted
             return 0
 
@@ -206,11 +211,16 @@ def handle_process_workflow(message_data, db_conn):
         raise ValueError("Incomplete data for 'process' message type.")
 
     try:
-        user_sub = validate_auth0_token(access_token)
-        if not user_sub:
-            # validate_token_and_get_sub already logs and raises AuthError
-            return # Should not be reached if AuthError is raised
+        token_payload = validate_auth0_token(access_token) # Renamed to token_payload
+        if not token_payload or 'sub' not in token_payload:
+            # validate_auth0_token logs errors if the token itself is invalid (expired, bad signature, etc.)
+            # This explicitly checks if, after successful validation, 'sub' is missing.
+            logger.error("Validated token payload is missing the 'sub' claim.")
+            raise ValueError("User subject ('sub') could not be determined from token.") # Or a more specific auth error
 
+        user_sub = token_payload['sub'] # Extracted the actual user_sub string
+
+        # Now user_sub is a string, as expected by _fetch_data_for_processing
         base_template_json, fields_mapping, products = _fetch_data_for_processing(user_sub, user_template_id, db_conn)
         
         # If no products, _generate_product_specific_items will return empty list, 
@@ -225,8 +235,8 @@ def handle_process_workflow(message_data, db_conn):
         logger.info(f"'process' workflow completed for user_template_id: {user_template_id}, outfeed_id: {outfeed_id}. Enqueued {enqueued_count} items.")
         return outfeed_id # Return the outfeed_id indicating this specific outfeed_id was processed.
 
-    except AuthError as auth_err: # AuthError is already an Exception subclass
-        logger.error(f"Authentication error in 'process' workflow: {auth_err}", exc_info=True)
+    except Auth0Error as auth_err: # Changed AuthError to Auth0Error
+        logger.error(f"Authentication error (Auth0Error) in 'process' workflow: {auth_err}", exc_info=True)
         # No rollback here as AuthError happens before DB operations usually or should be idempotent
         raise # Re-raise to be caught by main.py
     except ValueError as val_err:

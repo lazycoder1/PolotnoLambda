@@ -36,6 +36,20 @@ This document outlines the steps required to deploy the Marketing Image Generato
         ]
     }
     ```
+8. DB table 
+    ```
+    CREATE TABLE generated_feeds (
+        id                  UUID             PRIMARY KEY,
+        generated_json      JSONB            NOT NULL,
+        generated_img_url   TEXT,
+        outfeed_id          UUID             NOT NULL,
+        user_template_id    UUID             NOT NULL,
+        status              VARCHAR(50)      NOT NULL DEFAULT 'pending',
+        error_message       TEXT,
+        created_at          TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+        updated_at          TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+    )
+    ```
 
 ## Deployment Steps
 

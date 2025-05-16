@@ -1,6 +1,7 @@
 import json
 import os # For local testing environment variable setup
 from image_processor.logger import get_logger
+from auth0.exceptions import Auth0Error # Added import
 
 # Import functionalities from the new lambda_src package
 from lambda_src.config import initialize_config
