@@ -3,7 +3,7 @@ Text renderer module.
 Handles text processing, wrapping, and rendering with various styles.
 """
 
-from PIL import ImageFont, ImageDraw
+from PIL import ImageFont, ImageDraw, Image
 from utils.helpers import parse_color, contains_devanagari
 import unicodedata
 from image_processor.logger import get_logger
@@ -18,9 +18,187 @@ class TextRenderer:
         """Normalize Unicode to ensure consistent rendering of Devanagari text."""
         return unicodedata.normalize('NFC', text)
     
+    @staticmethod # New method to render text to its own image layer
+    def render_text_to_image(text_data: dict, font_mgr) -> Image.Image:
+        """Renders text onto a new transparent image sized to the element's dimensions."""
+        element_id = text_data.get('id', 'N/A')
+        element_width = int(text_data.get('width', 100)) # Default width if not specified
+        element_height = int(text_data.get('height', 30)) # Default height if not specified
+
+        # Ensure minimum dimensions
+        element_width = max(1, element_width)
+        element_height = max(1, element_height)
+
+        local_canvas = Image.new('RGBA', (element_width, element_height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(local_canvas)
+
+        text = text_data.get('text', '')
+        if not text:
+            logger.debug(f"Text ID {element_id}: Empty text, returning blank local canvas.")
+            return local_canvas
+        
+        text = TextRenderer.normalize_unicode(text)
+        font_size = text_data.get('fontSize', 20)
+        font_family = text_data.get('fontFamily', 'Arial')
+        font_variant = text_data.get('fontVariant', 'Regular')
+
+        pil_font = font_mgr.get_font(font_family, font_variant, font_size)
+        if not pil_font:
+            logger.error(f"Text ID {element_id}: Font {font_family} {font_variant} not loaded. Using Pillow default.")
+            try:
+                pil_font = ImageFont.load_default()
+            except Exception as e:
+                logger.critical(f"Text ID {element_id}: Failed to load Pillow default font: {e}. Returning blank canvas.")
+                return local_canvas # Cannot render without font
+
+        fill_color_str = text_data.get('fill', '#000000')
+        parsed_fill_color = parse_color(fill_color_str)
+
+        # Background properties
+        parsed_bg_color = None
+        actual_padding = 0
+        actual_corner_radius = 0
+
+        if text_data.get('backgroundEnabled', False):
+            bg_color_str = text_data.get('backgroundColor', 'rgba(0,0,0,0)')
+            parsed_bg_color = parse_color(bg_color_str)
+            padding_factor = text_data.get('backgroundPadding', 0.0)
+            corner_radius_factor = text_data.get('backgroundCornerRadius', 0.0)
+            actual_padding = padding_factor * font_size
+            actual_corner_radius = corner_radius_factor * font_size
+            if actual_corner_radius > 0:
+                # Cap corner radius to prevent overly large/weird shapes relative to padding/font size
+                # This ensures the radius doesn't exceed half the shortest dimension of the padded box around a line.
+                # A more robust approach might consider the actual line height.
+                actual_corner_radius = min(actual_corner_radius, actual_padding + font_size / 2, element_width / 2, element_height / 2)
+
+        alignment = text_data.get('align', 'left')
+        vertical_align = text_data.get('verticalAlign', 'top') # Added for vertical alignment
+        line_height_multiplier = text_data.get('lineHeight', 1.2)
+
+        words = text.split(' ') # Split by space, assumes simple space separation
+        wrapped_lines = []
+        current_line = ""
+        for word in words:
+            test_line = current_line + (" " if current_line else "") + word
+            if not current_line or pil_font.getlength(test_line) <= element_width:
+                current_line = test_line
+            else:
+                if current_line: # Add the line that was too long for the new word
+                    wrapped_lines.append(current_line)
+                current_line = word # New word starts a new line
+        if current_line:
+            wrapped_lines.append(current_line)
+
+        if not wrapped_lines:
+            logger.debug(f"Text ID {element_id}: No lines after wrapping (text: '{text}'), returning blank canvas.")
+            return local_canvas
+
+        # Calculate line height based on font metrics
+        try:
+            # Using getbbox for a character with ascenders and descenders to estimate line height
+            # Pillow's getsize/getlength is for width, getbbox includes vertical extent for a string.
+            # For a more accurate line_height, especially across fonts, one might need more complex metrics.
+            # Example: textbbox on a character like 'Agy' gives (left, top, right, bottom)
+            # where top is negative for ascenders relative to baseline, bottom positive for descenders.
+            # Height of the text content itself is bbox[3] - bbox[1].
+            bbox_metrics = pil_font.getbbox("Agy") 
+            text_content_height = bbox_metrics[3] - bbox_metrics[1] # Height of actual glyphs
+            line_height_px = text_content_height * line_height_multiplier
+        except (AttributeError, TypeError, IndexError):
+            logger.warning(f"Text ID {element_id}: Could not get precise font bbox metrics. Using fontSize * multiplier for line_height.")
+            line_height_px = font_size * line_height_multiplier
+        line_height_px = max(1, int(line_height_px)) # Ensure line height is at least 1
+
+        total_text_block_height = line_height_px * len(wrapped_lines)
+
+        # Determine starting y position based on vertical alignment
+        current_y = 0 # Default for top alignment
+        if vertical_align == 'middle':
+            current_y = (element_height - total_text_block_height) / 2
+        elif vertical_align == 'bottom':
+            current_y = element_height - total_text_block_height
+        
+        current_y = max(0, current_y) # Ensure drawing doesn't start outside the top of local_canvas
+
+        for line_idx, line in enumerate(wrapped_lines):
+            if not line.strip(): # Skip empty lines if any resulted from splitting
+                if line_idx < len(wrapped_lines) -1 : #Only add line height if not the last line, to prevent extra space at bottom
+                     current_y += line_height_px
+                continue
+
+            line_width = pil_font.getlength(line)
+            line_x = 0 # Default for left alignment
+            if alignment == 'center':
+                line_x = (element_width - line_width) / 2
+            elif alignment == 'right':
+                line_x = element_width - line_width
+            
+            line_x = max(0, line_x) # Ensure drawing doesn't start outside the left of local_canvas
+
+            # Calculate text_line_bbox relative to the local_canvas for background drawing
+            # Using (0,0) as reference for textbbox, then adjust by line_x, current_y
+            try:
+                # Get bbox of the text itself, anchored at its drawing position (line_x, current_y)
+                text_actual_bbox_on_line = draw.textbbox((line_x, current_y), line, font=pil_font, anchor="lt")
+            except AttributeError: # Fallback for older Pillow
+                logger.warning(f"Text ID {element_id} (line '{line}'): textbbox lacks 'anchor'. Background less precise.")
+                text_actual_bbox_on_line = (line_x, current_y, line_x + line_width, current_y + text_content_height)
+            except Exception as e_bbox:
+                logger.error(f"Text ID {element_id} (line '{line}'): Error getting textbbox: {e_bbox}. Background may be incorrect.")
+                text_actual_bbox_on_line = (line_x, current_y, line_x + line_width, current_y + text_content_height)
+
+            if text_data.get('backgroundEnabled', False) and parsed_bg_color:
+                # Background for this line, coordinates are relative to local_canvas
+                
+                # Determine horizontal extent of background based on element_width
+                bg_x0 = actual_padding # Padded start from left edge of element
+                bg_x1 = element_width - actual_padding # Padded end to right edge of element
+
+                # Vertical extent of background is based on the current line's text bounding box plus padding
+                bg_y0 = text_actual_bbox_on_line[1] - actual_padding
+                bg_y1 = text_actual_bbox_on_line[3] + actual_padding
+
+                bg_coords = (
+                    bg_x0,
+                    bg_y0,
+                    bg_x1,
+                    bg_y1
+                )
+                # Clip background to the element bounds if necessary
+                bg_coords_clipped = (
+                    max(0, bg_coords[0]), 
+                    max(0, bg_coords[1]), 
+                    min(element_width, bg_coords[2]), 
+                    min(element_height, bg_coords[3])
+                )
+                if bg_coords_clipped[2] > bg_coords_clipped[0] and bg_coords_clipped[3] > bg_coords_clipped[1]:
+                    draw.rounded_rectangle(bg_coords_clipped, radius=actual_corner_radius, fill=parsed_bg_color)
+                else:
+                    logger.debug(f"Text ID {element_id}: Clipped background for line '{line}' resulted in zero area. Skipping background draw.")
+
+            # Draw the text line itself
+            # The anchor='lt' means (line_x, current_y) is the top-left corner of the text bounding box.
+            draw.text((line_x, current_y), line, font=pil_font, fill=parsed_fill_color, anchor="lt")
+            current_y += line_height_px
+            
+            if current_y > element_height: # Stop if we're drawing past the element's allocated height
+                logger.debug(f"Text ID {element_id}: Text content exceeds element height. Stopping rendering for this element.")
+                break
+
+        return local_canvas
+
     @staticmethod
     def render_text(image, text_data, font_mgr):
-        """Render text onto the image according to the provided text_data."""
+        """DEPRECATED: Render text directly onto a shared canvas. 
+           Prefer render_text_to_image for layer-based processing.
+        """
+        logger.warning("Deprecated TextRenderer.render_text called. Consider switching to render_text_to_image.")
+        # Simple passthrough to a modified version of old logic or raise error
+        # For now, let's just log and attempt to use parts of the old logic if needed, 
+        # but ideally this method should be removed or fully refactored if direct drawing is still required.
+
+        # --- Start of adapted old logic (for context, will be simplified/removed) ---
         draw = ImageDraw.Draw(image)
         text = text_data.get('text', '')
         

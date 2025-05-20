@@ -9,7 +9,7 @@ from typing import Dict, Any
 import logging
 
 from .text_renderer import TextRenderer
-from .figure_renderer import process_figure
+from .figure_renderer import process_figure, render_figure_to_image
 from .image_handler import process_image
 from .config import CONFIG
 from .logger import get_logger
@@ -77,86 +77,186 @@ class ImageProcessor:
                 "Fetching new fonts from Google Fonts will fail."
             )
 
-    def combine_images(self, json_data: Dict[str, Any]) -> Image.Image:
+    def combine_images(self, json_data: Dict[str, Any]) -> tuple[Image.Image, list]:
         """Combine all elements from JSON data into a single image, returning the image and any element processing errors."""
-        element_processing_errors = [] # To store errors for individual elements
+        element_processing_errors = [] 
         try:
             if not isinstance(json_data, dict) or 'pages' not in json_data:
-                # This is a fundamental error, not an element error
+                element_processing_errors.append("Invalid JSON structure: missing 'pages' field")
                 raise ValueError("Invalid JSON structure: missing 'pages' field")
                 
-            canvas_width = int(json_data.get('width', CONFIG['canvas']['default_width']))
-            canvas_height = int(json_data.get('height', CONFIG['canvas']['default_height']))
-            bg_color_str = json_data.get('background', CONFIG['canvas']['default_bg_color'])
-            bg_color = parse_color(bg_color_str, default_color=(255,255,255,255)) # Provide a default tuple
+            final_canvas_width = int(json_data.get('width', CONFIG['canvas']['default_width']))
+            final_canvas_height = int(json_data.get('height', CONFIG['canvas']['default_height']))
             
-            logger.info(f"Creating canvas with dimensions {canvas_width}x{canvas_height}")
-            canvas = Image.new('RGBA', (canvas_width, canvas_height), bg_color)
-            draw = ImageDraw.Draw(canvas)
-            
+            # --- Stage 1: Prepare all element layers --- 
+            prepared_layers = []
             for page_idx, page in enumerate(json_data.get('pages', [])):
-                logger.debug(f"Processing page {page_idx+1}/{len(json_data.get('pages', []))}")
-
-                page_bg_color_str = page.get('background')
-                if page_bg_color_str:
-                    page_bg_color_tuple = parse_color(page_bg_color_str, default_color=None)
-                    if page_bg_color_tuple:
-                        logger.info(f"Applying page {page_idx+1} background color: {page_bg_color_tuple}")
-                        draw.rectangle([0, 0, canvas_width, canvas_height], fill=page_bg_color_tuple)
-                    else:
-                        logger.warning(f"Could not parse page {page_idx+1} background color: '{page_bg_color_str}'. Using initial canvas background.")
-
+                logger.debug(f"Preparing elements for page {page_idx+1}")
                 if 'children' not in page:
                     logger.warning(f"Page {page_idx+1} has no children, skipping")
-                    continue # Or append to errors if this is considered an issue
-                    
-                for child_idx, child in enumerate(page.get('children', [])):
-                    element_type = child.get('type')
-                    element_id = child.get('id', 'N/A')
+                    continue
+
+                for child_idx, child_data in enumerate(page.get('children', [])):
+                    element_type = child_data.get('type')
+                    element_id = child_data.get('id', 'N/A')
                     error_prefix = f"Element (ID: {element_id}, Type: {element_type}, Index: {child_idx} on Page: {page_idx+1})"
                     
                     try:
-                        if not child.get('visible', True):
-                            logger.debug(f"Element {element_id} is not visible, skipping")
+                        if not child_data.get('visible', True):
+                            logger.debug(f"Element {element_id} is not visible, skipping preparation")
                             continue
-                             
-                        logger.debug(f"Processing element {element_id} of type {element_type}")
+                        
+                        element_image: Image.Image | None = None # Ensure type hint
+                        element_x = int(child_data.get('x', 0))
+                        element_y = int(child_data.get('y', 0))
+                        
                         if element_type == 'figure':
-                            figure_processed_successfully = process_figure(child, canvas)
-                            if not figure_processed_successfully:
-                                err_msg = f"{error_prefix}: Figure element could not be processed or drawn correctly."
-                                logger.warning(err_msg)
-                                element_processing_errors.append(err_msg)
+                            element_image = render_figure_to_image(child_data)
+                            if not element_image:
+                                raise ValueError("Figure element could not be processed into an image layer.")
+
                         elif element_type == 'image':
-                            processed_image_data = process_image(child) # process_image now returns None on failure
+                            processed_image_data = process_image(child_data)
                             if processed_image_data:
-                                img, position = processed_image_data
-                                # img should be valid if processed_image_data is not None
-                                canvas.paste(img, position, img) 
+                                element_image, coords = processed_image_data
+                                element_x, element_y = coords  # Unpack correctly from the tuple
                             else:
-                                err_msg = f"{error_prefix}: Image could not be processed or loaded. Src: {child.get('src', 'N/A')}"
-                                logger.warning(err_msg)
-                                element_processing_errors.append(err_msg)
+                                raise ValueError(f"Image could not be processed or loaded. Src: {child_data.get('src', 'N/A')}")
+                        
                         elif element_type == 'text':
-                            # Assuming TextRenderer.render_text might raise an exception on failure
-                            TextRenderer.render_text(canvas, child, self.font_mgr)
+                            element_image = TextRenderer.render_text_to_image(child_data, self.font_mgr)
+                            if not element_image:
+                                raise ValueError("Text element could not be rendered to an image layer.")
                         else:
-                            warn_msg = f"{error_prefix}: Unknown element type '{element_type}'"
-                            logger.warning(warn_msg)
-                            element_processing_errors.append(warn_msg) # Treat unknown type as an error/warning
+                            # Corrected error message formatting
+                            raise ValueError(f"Unknown element type '{element_type}'") 
+
+                        if element_image:
+                            prepared_layers.append({
+                                'image': element_image,
+                                'x': element_x,
+                                'y': element_y,
+                                'data': child_data 
+                            })
                             
                     except Exception as e:
-                        err_msg = f"{error_prefix}: Failed due to: {str(e)}"
-                        logger.error(err_msg, exc_info=True) # Keep detailed log
-                        element_processing_errors.append(err_msg) # Add concise error for summary
+                        err_msg = f"{error_prefix}: Failed during layer preparation: {str(e)}"
+                        logger.error(err_msg, exc_info=True)
+                        element_processing_errors.append(err_msg)
             
-            logger.info("Image creation process complete.")
+            if not prepared_layers:
+                logger.warning("No visible elements were prepared. Returning blank canvas based on final dimensions.")
+                page_data_for_bg = json_data.get('pages', [{}])[0]
+                bg_color_str = page_data_for_bg.get('background', json_data.get('background', CONFIG['canvas']['default_bg_color']))
+                bg_color = parse_color(bg_color_str, default_color=(255,255,255,0))
+                blank_canvas = Image.new('RGBA', (final_canvas_width, final_canvas_height), bg_color)
+                return blank_canvas, element_processing_errors
+
+            # --- Stage 2: Calculate "Giant Canvas" dimensions --- 
+            min_overall_x, min_overall_y = float('inf'), float('inf')
+            max_overall_x_extent, max_overall_y_extent = float('-inf'), float('-inf')
+
+            for layer in prepared_layers:
+                img = layer['image']
+                x, y = layer['x'], layer['y']
+                min_overall_x = min(min_overall_x, x)
+                min_overall_y = min(min_overall_y, y)
+                max_overall_x_extent = max(max_overall_x_extent, x + img.width)
+                max_overall_y_extent = max(max_overall_y_extent, y + img.height)
+            
+            giant_canvas_width = int(max_overall_x_extent - min_overall_x)
+            giant_canvas_height = int(max_overall_y_extent - min_overall_y)
+            giant_canvas_width = max(1, giant_canvas_width) 
+            giant_canvas_height = max(1, giant_canvas_height)
+
+            logger.info(f"Giant canvas dimensions: {giant_canvas_width}x{giant_canvas_height}. Min X/Y: ({min_overall_x},{min_overall_y})")
+            giant_canvas = Image.new('RGBA', (giant_canvas_width, giant_canvas_height), (0, 0, 0, 0)) 
+
+            # --- Stage 3: Paste layers onto "Giant Canvas" --- 
+            for layer in prepared_layers:
+                element_img = layer['image']
+                paste_x = int(layer['x'] - min_overall_x)
+                paste_y = int(layer['y'] - min_overall_y)
+                element_data = layer['data']
+                
+                opacity = element_data.get('opacity', 1.0)
+                if opacity < 1.0 and element_img.mode == 'RGBA':
+                    alpha = element_img.split()[3]
+                    alpha = alpha.point(lambda p: int(p * opacity)) # Ensure int for Pillow
+                    element_img.putalpha(alpha)
+                
+                logger.debug(f"Pasting element {element_data.get('id')} at ({paste_x},{paste_y}) on giant canvas. Size: {element_img.size}")
+                giant_canvas.paste(element_img, (paste_x, paste_y), element_img if element_img.mode == 'RGBA' else None)
+
+            # --- Stage 4: Create Final Output Canvas and crop from Giant Canvas --- 
+            page_data = json_data.get('pages', [{}])[0] 
+            bg_color_str = page_data.get('background', json_data.get('background', CONFIG['canvas']['default_bg_color']))
+            bg_color = parse_color(bg_color_str, default_color=(255,255,255,255))
+            
+            # Create output canvas with the exact same dimensions as specified in the json_data
+            output_canvas = Image.new('RGBA', (final_canvas_width, final_canvas_height), bg_color)
+            
+            crop_source_x = int(0 - min_overall_x)
+            crop_source_y = int(0 - min_overall_y)
+            
+            crop_box = (
+                crop_source_x,
+                crop_source_y,
+                crop_source_x + final_canvas_width,
+                crop_source_y + final_canvas_height
+            )
+            logger.info(f"Cropping from giant canvas using box: {crop_box}")
+            
+            actual_crop_box = (
+                max(0, crop_box[0]),
+                max(0, crop_box[1]),
+                min(giant_canvas_width, crop_box[2]),
+                min(giant_canvas_height, crop_box[3])
+            )
+            
+            if actual_crop_box[2] > actual_crop_box[0] and actual_crop_box[3] > actual_crop_box[1]:
+                # Crop the region from the giant canvas
+                cropped_region = giant_canvas.crop(actual_crop_box)
+                
+                # Calculate where to paste on the output canvas
+                paste_on_output_x = 0
+                paste_on_output_y = 0
+                if crop_box[0] < 0:
+                    paste_on_output_x = -crop_box[0]
+                if crop_box[1] < 0:
+                    paste_on_output_y = -crop_box[1]
+                
+                # Create a new output canvas that is exactly the size of the cropped region 
+                # to ensure we don't resize the final image
+                if cropped_region.width != final_canvas_width or cropped_region.height != final_canvas_height:
+                    # Only use the original canvas if we need to position the cropped region
+                    # at a specific offset or if there's a background color
+                    if paste_on_output_x > 0 or paste_on_output_y > 0 or any(c > 0 for c in bg_color):
+                        # Paste the cropped region at the calculated position
+                        output_canvas.paste(cropped_region, (paste_on_output_x, paste_on_output_y), 
+                                           cropped_region if cropped_region.mode == 'RGBA' else None)
+                    else:
+                        # Just use the cropped region directly as our output - no resizing
+                        output_canvas = cropped_region
+                else:
+                    # The cropped region matches the target size exactly - paste it
+                    output_canvas.paste(cropped_region, (paste_on_output_x, paste_on_output_y), 
+                                       cropped_region if cropped_region.mode == 'RGBA' else None)
+            else:
+                logger.warning("Calculated crop box is invalid or outside giant canvas. Output might be blank or only background.")
+
             if element_processing_errors:
                 logger.warning(f"Image generation completed with {len(element_processing_errors)} element-level errors/warnings.")
-            return canvas, element_processing_errors # Return both
+            else:
+                logger.info("Image creation process complete with giant canvas logic.")
+            return output_canvas, element_processing_errors
             
         except Exception as e:
-            # This catches errors in canvas setup or other fundamental issues
             logger.error(f"Critical error in combine_images: {str(e)}", exc_info=True)
-            # Return None for canvas and the error message, or re-raise if this path shouldn't be handled by the caller similarly
-            return None, [f"Critical error in combine_images: {str(e)}"] # Ensure consistent return type 
+            element_processing_errors.append(f"Critical error in combine_images: {str(e)}")
+            # Fallback to a blank/error image of final size
+            final_fallback_image = Image.new('RGBA', 
+                                     (json_data.get('width', CONFIG['canvas']['default_width']), 
+                                      json_data.get('height', CONFIG['canvas']['default_height'])), 
+                                     (255, 0, 0, 255)) # Red canvas
+            return final_fallback_image, element_processing_errors 

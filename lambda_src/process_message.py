@@ -17,11 +17,11 @@ NAMESPACE_UUID = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8') # Example, re
 
 def _fetch_data_for_processing(user_sub, user_template_id, db_conn):
     """Fetches all necessary data from the database for the 'process' workflow."""
-    logger.info(f"Fetching user_template for user_sub: {user_sub}, user_template_id: {user_template_id}")
-    template_query = "SELECT template_json, user_sub FROM facebook_test.user_templates WHERE user_sub = %s AND id = %s"
-    template_row = execute_query(db_conn, template_query, (user_sub, user_template_id), fetch_one=True)
+    logger.info(f"Fetching user_template for user_template_id: {user_template_id}")
+    template_query = "SELECT template_json FROM facebook_test.user_templates WHERE id = %s"
+    template_row = execute_query(db_conn, template_query, (user_template_id,), fetch_one=True)
     if not template_row or not template_row['template_json']:
-        logger.error(f"User template not found or template_json is empty for user_sub: {user_sub}, id: {user_template_id}")
+        logger.error(f"User template not found or template_json is empty for id: {user_template_id}")
         raise ValueError("User template not found or invalid.")
     base_template_json_str = template_row['template_json']
     
@@ -135,13 +135,14 @@ def _store_and_enqueue_generated_items(items_to_store, outfeed_id, user_template
             # Ensure 'id' column is the primary key or has a unique constraint in 'generated_feeds'
             upsert_query = """
             INSERT INTO facebook_test.generated_feeds 
-            (id, generated_json, outfeed_id, user_template_id, user_sub, status, error_message, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (id, generated_json, outfeed_id, user_template_id, user_sub, product_id, status, error_message, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 generated_json = EXCLUDED.generated_json,
                 outfeed_id = EXCLUDED.outfeed_id,
                 user_template_id = EXCLUDED.user_template_id,
                 user_sub = EXCLUDED.user_sub,
+                product_id = EXCLUDED.product_id,
                 status = EXCLUDED.status,
                 error_message = NULL, -- Reset error message on update/overwrite
                 generated_img_url = NULL, -- Reset image URL on update/overwrite
@@ -156,7 +157,8 @@ def _store_and_enqueue_generated_items(items_to_store, outfeed_id, user_template
                 generated_json_str, 
                 outfeed_id, 
                 user_template_id, 
-                user_sub, 
+                user_sub,
+                product_id,  # Added product_id to params
                 'PROCESSED', # Initial status
                 None, # error_message, initially null
                 current_time, 
