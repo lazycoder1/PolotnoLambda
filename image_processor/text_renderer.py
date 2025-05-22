@@ -62,15 +62,37 @@ class TextRenderer:
         if text_data.get('backgroundEnabled', False):
             bg_color_str = text_data.get('backgroundColor', 'rgba(0,0,0,0)')
             parsed_bg_color = parse_color(bg_color_str)
+            
+            # Handle background opacity separately from the color's alpha
+            bg_opacity = text_data.get('backgroundOpacity', 1.0)
+            if parsed_bg_color and bg_opacity < 1.0:
+                # If parsed_bg_color has alpha, adjust it by bg_opacity
+                r, g, b, a = parsed_bg_color
+                a = int(a * bg_opacity)
+                parsed_bg_color = (r, g, b, a)
+                logger.debug(f"Text ID {element_id}: Applied backgroundOpacity {bg_opacity} to background color, resulting alpha: {a}")
+                
+            # Get padding and corner radius as factors of font size
             padding_factor = text_data.get('backgroundPadding', 0.0)
             corner_radius_factor = text_data.get('backgroundCornerRadius', 0.0)
-            actual_padding = padding_factor * font_size
-            actual_corner_radius = corner_radius_factor * font_size
+            
+            # Calculate actual pixel values
+            actual_padding = max(0, padding_factor * font_size)
+            
+            # Apply a smaller multiplier (0.6) to the corner radius to make it less prominent
+            actual_corner_radius = max(0, corner_radius_factor * font_size * 0.6)
+            
             if actual_corner_radius > 0:
                 # Cap corner radius to prevent overly large/weird shapes relative to padding/font size
-                # This ensures the radius doesn't exceed half the shortest dimension of the padded box around a line.
-                # A more robust approach might consider the actual line height.
-                actual_corner_radius = min(actual_corner_radius, actual_padding + font_size / 2, element_width / 2, element_height / 2)
+                # Use a more conservative cap that's a fraction of the padding to ensure smaller corners
+                max_radius = min(
+                    actual_padding * 0.8,  # 80% of the padding
+                    font_size / 3,         # 1/3 of the font size (smaller than previous 1/2)
+                    element_width / 4,     # 1/4 of element width (smaller than previous 1/2)
+                    element_height / 4     # 1/4 of element height (smaller than previous 1/2)
+                )
+                actual_corner_radius = min(actual_corner_radius, max_radius)
+                logger.debug(f"Text ID {element_id}: Corner radius reduced and capped to {actual_corner_radius}px")
 
         alignment = text_data.get('align', 'left')
         vertical_align = text_data.get('verticalAlign', 'top') # Added for vertical alignment
@@ -121,10 +143,53 @@ class TextRenderer:
         
         current_y = max(0, current_y) # Ensure drawing doesn't start outside the top of local_canvas
 
+        # Draw text background for all lines first to ensure consistent order
+        if text_data.get('backgroundEnabled', False) and parsed_bg_color:
+            for line_idx, line in enumerate(wrapped_lines):
+                if not line.strip(): # Skip empty lines
+                    continue
+                
+                line_width = pil_font.getlength(line)
+                line_x = 0 # Default for left alignment
+                if alignment == 'center':
+                    line_x = (element_width - line_width) / 2
+                elif alignment == 'right':
+                    line_x = element_width - line_width
+                
+                line_x = max(0, line_x) # Ensure drawing doesn't start outside the left of canvas
+                line_y = current_y + line_idx * line_height_px
+                
+                # Get bbox of the text itself, anchored at its drawing position
+                try:
+                    text_actual_bbox = draw.textbbox((line_x, line_y), line, font=pil_font, anchor="lt")
+                except AttributeError: # Fallback for older Pillow
+                    text_actual_bbox = (line_x, line_y, line_x + line_width, line_y + text_content_height)
+                
+                # Determine background box with padding
+                bg_x0 = text_actual_bbox[0] - actual_padding
+                bg_y0 = text_actual_bbox[1] - actual_padding
+                bg_x1 = text_actual_bbox[2] + actual_padding
+                bg_y1 = text_actual_bbox[3] + actual_padding
+                
+                # Clip to element bounds
+                bg_coords = (
+                    max(0, bg_x0),
+                    max(0, bg_y0),
+                    min(element_width, bg_x1),
+                    min(element_height, bg_y1)
+                )
+                
+                # Only draw if the background has area
+                if bg_coords[2] > bg_coords[0] and bg_coords[3] > bg_coords[1]:
+                    # Draw the background with rounded corners
+                    draw.rounded_rectangle(bg_coords, radius=actual_corner_radius, fill=parsed_bg_color)
+                    logger.debug(f"Text ID {element_id}: Drew background for line {line_idx+1} at {bg_coords} with radius {actual_corner_radius} and color {parsed_bg_color}")
+
+        # Now draw the text on top of backgrounds
         for line_idx, line in enumerate(wrapped_lines):
-            if not line.strip(): # Skip empty lines if any resulted from splitting
-                if line_idx < len(wrapped_lines) -1 : #Only add line height if not the last line, to prevent extra space at bottom
-                     current_y += line_height_px
+            if not line.strip(): # Skip empty lines
+                if line_idx < len(wrapped_lines) - 1: # Only add line height if not the last line
+                    current_y += line_height_px
                 continue
 
             line_width = pil_font.getlength(line)
@@ -135,48 +200,7 @@ class TextRenderer:
                 line_x = element_width - line_width
             
             line_x = max(0, line_x) # Ensure drawing doesn't start outside the left of local_canvas
-
-            # Calculate text_line_bbox relative to the local_canvas for background drawing
-            # Using (0,0) as reference for textbbox, then adjust by line_x, current_y
-            try:
-                # Get bbox of the text itself, anchored at its drawing position (line_x, current_y)
-                text_actual_bbox_on_line = draw.textbbox((line_x, current_y), line, font=pil_font, anchor="lt")
-            except AttributeError: # Fallback for older Pillow
-                logger.warning(f"Text ID {element_id} (line '{line}'): textbbox lacks 'anchor'. Background less precise.")
-                text_actual_bbox_on_line = (line_x, current_y, line_x + line_width, current_y + text_content_height)
-            except Exception as e_bbox:
-                logger.error(f"Text ID {element_id} (line '{line}'): Error getting textbbox: {e_bbox}. Background may be incorrect.")
-                text_actual_bbox_on_line = (line_x, current_y, line_x + line_width, current_y + text_content_height)
-
-            if text_data.get('backgroundEnabled', False) and parsed_bg_color:
-                # Background for this line, coordinates are relative to local_canvas
-                
-                # Determine horizontal extent of background based on element_width
-                bg_x0 = actual_padding # Padded start from left edge of element
-                bg_x1 = element_width - actual_padding # Padded end to right edge of element
-
-                # Vertical extent of background is based on the current line's text bounding box plus padding
-                bg_y0 = text_actual_bbox_on_line[1] - actual_padding
-                bg_y1 = text_actual_bbox_on_line[3] + actual_padding
-
-                bg_coords = (
-                    bg_x0,
-                    bg_y0,
-                    bg_x1,
-                    bg_y1
-                )
-                # Clip background to the element bounds if necessary
-                bg_coords_clipped = (
-                    max(0, bg_coords[0]), 
-                    max(0, bg_coords[1]), 
-                    min(element_width, bg_coords[2]), 
-                    min(element_height, bg_coords[3])
-                )
-                if bg_coords_clipped[2] > bg_coords_clipped[0] and bg_coords_clipped[3] > bg_coords_clipped[1]:
-                    draw.rounded_rectangle(bg_coords_clipped, radius=actual_corner_radius, fill=parsed_bg_color)
-                else:
-                    logger.debug(f"Text ID {element_id}: Clipped background for line '{line}' resulted in zero area. Skipping background draw.")
-
+            
             # Draw the text line itself
             # The anchor='lt' means (line_x, current_y) is the top-left corner of the text bounding box.
             draw.text((line_x, current_y), line, font=pil_font, fill=parsed_fill_color, anchor="lt")
@@ -241,19 +265,30 @@ class TextRenderer:
             bg_color_str = text_data.get('backgroundColor', 'rgba(0,0,0,0)') # Default to fully transparent
             parsed_bg_color = parse_color(bg_color_str) if isinstance(bg_color_str, str) else bg_color_str
             
+            # Handle background opacity separately from the color's alpha
+            bg_opacity = text_data.get('backgroundOpacity', 1.0)
+            if parsed_bg_color and bg_opacity < 1.0:
+                # If parsed_bg_color has alpha, adjust it by bg_opacity
+                r, g, b, a = parsed_bg_color
+                a = int(a * bg_opacity)
+                parsed_bg_color = (r, g, b, a)
+            
             padding_factor = text_data.get('backgroundPadding', 0.0)
             corner_radius_factor = text_data.get('backgroundCornerRadius', 0.0)
 
             # Calculate actual pixel values from factors and font_size
             actual_padding = padding_factor * font_size 
-            actual_corner_radius = corner_radius_factor * font_size
+            actual_corner_radius = corner_radius_factor * font_size * 0.6  # Apply 0.6 multiplier for smaller radius
             
-            # Ensure corner radius is not excessively large, e.g., cap it relative to padding or a fraction of font_size
-            # For example, cap radius at actual_padding or font_size to avoid strange shapes.
-            # This is a simple heuristic; more sophisticated logic might be needed for perfect visuals.
+            # Ensure corner radius is not excessively large
             if actual_corner_radius > 0:
-                 actual_corner_radius = min(actual_corner_radius, actual_padding + font_size / 2)
-
+                 # Use more conservative cap similar to render_text_to_image method
+                 max_radius = min(
+                     actual_padding * 0.8,  # 80% of the padding
+                     font_size / 3,         # 1/3 of the font size
+                     text_data.get('width', font_size) / 4 if text_data.get('width') else font_size  # 1/4 of width if available
+                 )
+                 actual_corner_radius = min(actual_corner_radius, max_radius)
 
             logger.info(f"Text ID {text_data.get('id')}: Background enabled. Color: {bg_color_str}->{parsed_bg_color}, PaddingFactor: {padding_factor}, CornerRadiusFactor: {corner_radius_factor}")
             logger.info(f"Text ID {text_data.get('id')}: FontSize: {font_size}px -> ActualPadding: {actual_padding:.2f}px, ActualCornerRadius: {actual_corner_radius:.2f}px")
